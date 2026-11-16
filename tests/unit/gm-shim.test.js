@@ -377,14 +377,14 @@ test('不支援的 GM API → 會 console.error 的 stub（不是靜默失敗、
   const dom = createFakeDom();
   const api = install(
     dom,
-    config({ grants: ['GM_download', 'GM_cookie'], unsupported: ['GM_download', 'GM_cookie'] }),
+    config({ grants: ['GM_cookie', 'GM_unknownThing'], unsupported: ['GM_cookie', 'GM_unknownThing'] }),
   );
 
-  assert.equal(typeof api.GM_download, 'function');
-  assert.doesNotThrow(() => api.GM_download('https://x.test/a.zip'));
+  assert.equal(typeof api.GM_cookie, 'function');
+  assert.doesNotThrow(() => api.GM_cookie({ action: 'list' }));
 
   assert.equal(dom.errors.length, 1);
-  assert.match(dom.errors[0][0], /尚未支援 GM_download/);
+  assert.match(dom.errors[0][0], /尚未支援 GM_cookie/);
 });
 
 test('shim 被載入兩次不會把第一支腳本的 api 清掉', () => {
@@ -413,8 +413,122 @@ test('shim 自己完全不碰頁面的全域名字（只掛一個 __localMonkey�
   install(dom, config({ grants: ['GM_setValue'] }));
 
   const added = Object.keys(dom.window).filter(
-    (key) => !['document', 'location', 'localStorage', 'open', 'setTimeout', 'clearTimeout', 'requestIdleCallback', 'navigator', 'fetch', 'Notification', 'window', 'self'].includes(key),
+    (key) => !['document', 'location', 'localStorage', 'open', 'setTimeout', 'clearTimeout', 'requestIdleCallback', 'navigator', 'URL', 'fetch', 'Notification', 'window', 'self'].includes(key),
   );
 
   assert.deepEqual(added, ['__localMonkey']);
+});
+
+/* ------------------------------ GM_download ------------------------------ */
+
+test('GM_download：blob: 網址直接用 <a download> 存檔', () => {
+  const dom = createFakeDom();
+  const api = install(dom, config({ grants: ['GM_download'], unsupported: [] }));
+
+  const loaded = [];
+  api.GM_download({ url: 'blob:fake/original', name: '圖卡.png', onload: () => loaded.push(1) });
+
+  assert.equal(dom.clicks.length, 1, '要真的點下去');
+  const anchor = dom.clicks[0];
+  assert.equal(anchor.tagName, 'A');
+  assert.equal(anchor.getAttribute('download'), '圖卡.png');
+  assert.equal(anchor.getAttribute('href'), 'blob:fake/original');
+  assert.equal(loaded.length, 1, 'onload 要被呼叫');
+});
+
+test('GM_download：data: 網址一樣直接存', () => {
+  const dom = createFakeDom();
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  api.GM_download({ url: 'data:image/png;base64,AAAA', name: 'a.png' });
+
+  assert.equal(dom.clicks.length, 1);
+  assert.equal(dom.clicks[0].getAttribute('href'), 'data:image/png;base64,AAAA');
+});
+
+test('GM_download：字串形式 GM_download(url, name) 也吃得下', () => {
+  const dom = createFakeDom();
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  api.GM_download('blob:fake/x', 'b.png');
+
+  assert.equal(dom.clicks[0].getAttribute('download'), 'b.png');
+});
+
+test('GM_download：存完要把 <a> 從頁面上移掉（不要留垃圾在別人的 DOM 裡）', () => {
+  const dom = createFakeDom();
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  api.GM_download({ url: 'blob:fake/x', name: 'c.png' });
+  dom.drainTimers();
+
+  assert.equal(
+    dom.body.children.some((child) => child.tagName === 'A'),
+    false,
+    '<a> 應該被清掉了',
+  );
+});
+
+test('GM_download：http(s) 網址先 fetch 成 blob 再存，並釋放 objectURL', async () => {
+  const dom = createFakeDom();
+  dom.window.fetch = () => Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve({ fake: 'png' }) });
+  dom.sandbox.fetch = dom.window.fetch;
+
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  const loaded = [];
+  api.GM_download({ url: 'https://cdn.test/a.png', name: 'd.png', onload: () => loaded.push(1) });
+  await flush();
+
+  assert.equal(dom.objectUrls.length, 1, '要把 blob 轉成 objectURL');
+  assert.equal(dom.clicks[0].getAttribute('href'), dom.objectUrls[0].url);
+  assert.equal(loaded.length, 1);
+
+  dom.drainTimers();
+  assert.deepEqual(dom.revokedUrls, [dom.objectUrls[0].url], 'objectURL 要釋放掉');
+});
+
+test('⛔ GM_download：抓不到遠端檔案時只回報錯誤，絕不點一個會把頁面導走的連結', async () => {
+  const dom = createFakeDom();
+  dom.window.fetch = () => Promise.reject(new Error('CORS'));
+  dom.sandbox.fetch = dom.window.fetch;
+
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  const errors = [];
+  assert.doesNotThrow(() =>
+    api.GM_download({ url: 'https://cdn.test/a.png', name: 'e.png', onerror: (error) => errors.push(error) }),
+  );
+  await flush();
+
+  assert.equal(errors.length, 1, 'onerror 要被呼叫');
+  assert.equal(dom.clicks.length, 0, '不能點任何連結 —— 遠端 href 加 download 會讓瀏覽器直接導航離開');
+  assert.ok(dom.warnings.length > 0);
+});
+
+test('GM_download：回傳物件有 abort，而且 abort 後不再呼叫 callback', async () => {
+  const dom = createFakeDom();
+  let resolveFetch = null;
+  dom.window.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+  dom.sandbox.fetch = dom.window.fetch;
+
+  const api = install(dom, config({ grants: ['GM_download'] }));
+
+  const loaded = [];
+  const handle = api.GM_download({ url: 'https://cdn.test/a.png', onload: () => loaded.push(1) });
+
+  assert.equal(typeof handle.abort, 'function');
+  handle.abort();
+  resolveFetch({ ok: true, status: 200, blob: () => Promise.resolve({}) });
+  await flush();
+
+  assert.equal(loaded.length, 0, 'abort 之後不該再回呼');
+  assert.equal(dom.clicks.length, 0);
+});
+
+test('GM_download 沒有 grant 就拿不到', () => {
+  const dom = createFakeDom();
+  const api = install(dom, config({ grants: ['GM_setValue'] }));
+
+  assert.equal('GM_download' in api, false);
 });

@@ -52,6 +52,25 @@ function aliasLines(scriptId, aliases) {
 }
 
 /**
+ * `@noframes`：只在最上層頁面跑。
+ *
+ * 判斷只能在瀏覽器端做 —— 伺服器不知道這份 HTML 會不會被塞進 iframe。
+ * 兩個刻意的選擇：
+ *   - 讀 `window.top` 丟錯（跨來源 frame）→ 當成在 iframe 裡，不跑
+ *   - `window.top` 根本不存在（非瀏覽器環境）→ 當成最上層，照跑（fail open）
+ *     判斷不出來的時候，寧可讓使用者的腳本執行，也不要靜默什麼都不做。
+ */
+const NOFRAMES_LINES = [
+  '  var __lmInFrame = false;',
+  '  try {',
+  '    __lmInFrame = !!(window.top && window.top !== window.self);',
+  '  } catch (error) {',
+  '    __lmInFrame = true; // 讀不到 top 幾乎一定是跨來源的 frame',
+  '  }',
+  '  if (__lmInFrame) return;',
+];
+
+/**
  * document-idle 的排程。整段在 IIFE 裡，沒有任何全域名字 ——
  * 用 `function run()` 的話，同一頁的第二支 idle 腳本會覆蓋第一支，
  * 結果只有一支真的執行，而且完全不報錯。
@@ -73,21 +92,26 @@ const IDLE_LINES = [
 /**
  * @param {string} name 腳本名稱（只用來做錯誤訊息）
  * @param {string} code 使用者的原始程式碼
- * @param {{ runAt?: string, scriptId?: string, grants?: readonly string[] }} [options]
+ * @param {{ runAt?: string, scriptId?: string, grants?: readonly string[], noframes?: boolean }} [options]
  * @returns {string} 可直接當 .js 回應的內容
  */
 function wrapUserCode(name, code, options = {}) {
   const label = `[LocalMonkey] ${name} 執行失敗`;
   const aliases = aliasNamesFor(options.grants);
   const idle = options.runAt === 'document-idle';
+  const noframes = options.noframes === true;
 
-  if (!idle && aliases.length === 0) return plainWrapper(name, code, label);
+  // 沒有任何需要包裝的理由時，維持 v1 的形狀
+  if (!idle && !noframes && aliases.length === 0) return plainWrapper(name, code, label);
 
-  const suffix = idle ? ' (document-idle)' : '';
+  const suffix = [idle ? 'document-idle' : null, noframes ? '@noframes' : null]
+    .filter(Boolean)
+    .join(', ');
 
   return [
-    `/* LocalMonkey script${suffix}: ${commentSafe(name)} */`,
+    `/* LocalMonkey script${suffix ? ` (${suffix})` : ''}: ${commentSafe(name)} */`,
     '(function () {',
+    ...(noframes ? NOFRAMES_LINES : []),
     ...aliasLines(options.scriptId, aliases),
     '  var __lmRun = function () {',
     '    try {',

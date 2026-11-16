@@ -51,7 +51,7 @@ test('POST /scripts：丟一支兩個 @match 的腳本 → 自動建兩個站並
   assert.equal(response.body.script.metadata.needsShim, true);
 
   assert.deepEqual(
-    response.body.targets.map((target) => [target.status, target.host, target.pathGlob, target.siteId]),
+    response.body.targets.map((target) => [target.proxyable, target.host, target.pathGlob, target.siteId]),
     [
       ['ready', 'www.example.test', '*', 'example-test'],
       ['ready', 'seller.example.test', '/items/**', 'seller-example-test'],
@@ -117,10 +117,10 @@ test('POST /userscript/parse：每個被拒絕的 pattern 都要有原因（UI �
   });
 
   assert.deepEqual(
-    response.body.parsed.targets.map((target) => target.status),
+    response.body.parsed.targets.map((target) => target.proxyable),
     ['rejected', 'needs-host', 'ready'],
   );
-  assert.ok(response.body.parsed.targets.every((target) => target.status === 'ready' || target.reason));
+  assert.ok(response.body.parsed.targets.every((target) => target.proxyable === 'ready' || target.reason));
 });
 
 test('GET /scripts：列表不帶 source（要輕），但帶得出掛在哪些站', async (t) => {
@@ -233,7 +233,7 @@ test('POST /scripts：全部 @match 都被拒 → 還是存起來，但沒有綁
 
   assert.equal(response.status, 201);
   assert.deepEqual(response.body.script.sites, []);
-  assert.equal(response.body.targets[0].status, 'rejected');
+  assert.equal(response.body.targets[0].proxyable, 'rejected');
   assert.ok(response.body.warnings.length > 0);
   assert.deepEqual((await call('/admin/api/sites')).body.sites, [], '不准建站');
 });

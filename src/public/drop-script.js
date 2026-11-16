@@ -16,8 +16,8 @@ window.LocalMonkeyDropScript = (function createDropScript() {
 
   function targetRow(target) {
     return `
-      <tr class="is-${target.status}">
-        <td>${infoBar.badge(target.status)}</td>
+      <tr class="is-${target.proxyable}">
+        <td>${infoBar.badge(target.proxyable)}</td>
         <td><code>${escapeHtml(target.pattern)}</code></td>
         <td>${target.host ? `<code>${escapeHtml(target.targetOrigin)}</code>` : '<span class="muted">—</span>'}</td>
         <td>${target.pathGlob ? `<code>${escapeHtml(target.pathGlob)}</code>` : '<span class="muted">—</span>'}</td>
@@ -32,7 +32,7 @@ window.LocalMonkeyDropScript = (function createDropScript() {
     infoBar.render(byId('drop-info'), parsed);
     byId('drop-targets').innerHTML = parsed.targets.map((target) => targetRow(target)).join('');
 
-    const usable = parsed.targets.filter((target) => target.status !== 'rejected').length;
+    const usable = parsed.targets.filter((target) => target.proxyable !== 'rejected').length;
     byId('drop-deploy').disabled = false;
 
     byId('drop-status').textContent =

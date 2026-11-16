@@ -61,6 +61,7 @@ function createInternalRouter({ store }) {
         runAt: script.run_at,
         scriptId: script.id,
         grants: script.metadata?.grants,
+        noframes: script.metadata?.noframes === true,
       }),
     );
   });

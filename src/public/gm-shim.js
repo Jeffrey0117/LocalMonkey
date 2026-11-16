@@ -238,6 +238,120 @@
     return showToast(heading && text ? heading + '：' + text : heading || text);
   }
 
+  /* ------------------------------ GM_download ------------------------------ */
+
+  /**
+   * 用 `<a download>` 存檔。
+   *
+   * ⛔ href **只准**是 blob: 或 data:。把遠端網址直接放進去的話，跨來源時瀏覽器會
+   * 忽略 download 屬性、改成「導航」—— 等於把使用者正在看的頁面弄掉。
+   * 遠端檔案一律先 fetch 成 blob（見下面 createDownload）。
+   */
+  function saveLocalUrl(url, name) {
+    var anchor = document.createElement('a');
+    anchor.setAttribute('href', url);
+    anchor.setAttribute('download', name || '');
+    anchor.setAttribute('rel', 'noopener');
+    anchor.style.display = 'none';
+
+    mountPoint().appendChild(anchor);
+    anchor.click();
+
+    window.setTimeout(function () {
+      try {
+        anchor.remove();
+      } catch (ignored) {
+        /* 頁面可能已經換掉了 */
+      }
+    }, 1000);
+
+    return anchor;
+  }
+
+  function createDownload() {
+    return function GM_download(details, fallbackName) {
+      var options = typeof details === 'string' ? { url: details, name: fallbackName } : details || {};
+      var url = String(options.url === undefined ? '' : options.url);
+      var name = options.name === undefined ? '' : String(options.name);
+      var aborted = false;
+
+      function fail(payload) {
+        if (aborted) return;
+        if (typeof options.onerror === 'function') {
+          try {
+            options.onerror(payload);
+          } catch (error) {
+            warn('GM_download 的 onerror 自己丟錯', error);
+          }
+          return;
+        }
+        warn('GM_download 失敗', payload);
+      }
+
+      function done() {
+        if (aborted || typeof options.onload !== 'function') return;
+        try {
+          options.onload({ finalUrl: url });
+        } catch (error) {
+          warn('GM_download 的 onload 自己丟錯', error);
+        }
+      }
+
+      try {
+        if (/^(blob:|data:)/i.test(url)) {
+          saveLocalUrl(url, name);
+          done();
+          return { abort: function () { aborted = true; } };
+        }
+
+        if (!/^https?:/i.test(url)) {
+          fail({ error: 'bad_url', message: 'GM_download 只接受 http(s) / blob: / data: 網址' });
+          return { abort: function () { aborted = true; } };
+        }
+
+        var send = window.fetch || fetch;
+        send
+          .call(window, url, { credentials: 'omit' })
+          .then(function (response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.blob();
+          })
+          .then(function (blob) {
+            if (aborted) return;
+
+            var objectUrl = window.URL.createObjectURL(blob);
+            saveLocalUrl(objectUrl, name);
+
+            window.setTimeout(function () {
+              try {
+                window.URL.revokeObjectURL(objectUrl);
+              } catch (ignored) {
+                /* 已經被釋放了 */
+              }
+            }, 10000);
+
+            done();
+          })
+          .catch(function (error) {
+            // 這個失敗帶著一個 LocalMonkey 自己的決定（不用導航下載），所以除了
+            // 回報給腳本，也一定要讓它出現在 console —— 腳本的 onerror 往往只說「失敗」。
+            warn('GM_download 沒有下載 ' + url + '：跨來源檔案需要對方給 CORS header', error);
+            fail({
+              error: 'fetch_failed',
+              message:
+                '抓不到 ' + url + '（' + String((error && error.message) || error) + '）。' +
+                '跨來源的檔案需要對方給 CORS header；LocalMonkey 不會改用導航的方式下載，' +
+                '那會把你正在看的頁面弄掉。',
+            });
+          });
+      } catch (error) {
+        fail({ error: 'shim_error', message: String((error && error.message) || error) });
+      }
+
+      return { abort: function () { aborted = true; } };
+    };
+  }
+
   /* ------------------------------ GM_xmlhttpRequest ------------------------------ */
 
   function headerString(headers) {
@@ -452,6 +566,7 @@
         return entry && entry.assetUrl ? entry.assetUrl : null;
       },
       GM_xmlhttpRequest: createXhr(config),
+      GM_download: createDownload(),
     };
   }
 
@@ -485,6 +600,7 @@
       getResourceURL: promisify(implementations.GM_getResourceURL),
       info: implementations.GM_info,
       xmlHttpRequest: implementations.GM_xmlhttpRequest,
+      download: implementations.GM_download,
     };
   }
 

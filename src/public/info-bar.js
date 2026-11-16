@@ -31,7 +31,7 @@ window.LocalMonkeyInfoBar = (function createInfoBar() {
       .map((target) => {
         const host = target.host ?? target.pattern;
         const path = target.pathGlob && target.pathGlob !== '*' ? `<span class="muted">${escapeHtml(target.pathGlob)}</span>` : '';
-        const note = target.status === 'ready' ? '' : badge(target.status);
+        const note = target.proxyable === 'ready' ? '' : badge(target.proxyable);
         const title = target.reason ?? target.warning ?? '';
 
         return `<span class="chip" title="${escapeHtml(title)}">${escapeHtml(host)} ${path} ${note}${

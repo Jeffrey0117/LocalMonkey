@@ -10,6 +10,19 @@
  *   LocalMonkey 的 `*`  ：**不**跨 `/`（要 `**` 才跨，見 lib/glob.js）
  *
  * 所以路徑裡的每一段 `*` 都要翻成 `**`，而整站的 `/*` 翻成 glob 的 match-all 特例 `*`。
+ *
+ * 每個 target 有**兩個互相獨立的軸**（SPEC-console §8）：
+ *
+ *   proxyable   能不能用代理模式（ready / needs-host / rejected）
+ *   deliverable 能不能用投遞模式 —— **永遠 true**，任何腳本都能讓 Tampermonkey 裝
+ *
+ * 「配全世界」那種 pattern（all_urls、scheme 與主機都是萬用）會是
+ * `proxyable: 'rejected'` 但 `deliverable: true`：反向代理必須指向具體主機，
+ * 但同一支腳本投遞給 Tampermonkey 就完全正常。
+ * UI 不要說「這支不支援」，要說「不能用代理模式（原因…），可以用投遞模式」。
+ *
+ * （註：這段刻意不寫出那個 pattern 的字面值 —— 它含有 `*` 加斜線，
+ *   會把這個區塊註解提前關掉。踩過一次了。）
  */
 
 const { MAX_PATTERN_LENGTH } = require('../lib/glob.js');
@@ -41,7 +54,8 @@ function rejected(pattern, kind, reason) {
   return freezeTarget({
     pattern,
     kind,
-    status: 'rejected',
+    proxyable: 'rejected',
+    deliverable: true,
     scheme: null,
     host: null,
     wildcardHost: false,
@@ -181,7 +195,8 @@ function buildTarget({ pattern, kind, scheme, hostResult, pathGlob, warning = nu
   return freezeTarget({
     pattern,
     kind,
-    status: hostResult.status,
+    proxyable: hostResult.status,
+    deliverable: true,
     scheme,
     host: hostResult.host,
     wildcardHost: hostResult.wildcardHost === true,

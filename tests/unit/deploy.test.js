@@ -56,7 +56,7 @@ test('兩個 @match → 自動建兩個站，腳本同時掛上去', async (t) =
 
   assert.equal(result.targets.length, 2);
   assert.deepEqual(
-    result.targets.map((target) => target.status),
+    result.targets.map((target) => target.proxyable),
     ['ready', 'ready'],
   );
 
@@ -114,7 +114,7 @@ test('萬用子網域 → 建在主網域上，狀態保留 needs-host 讓 UI �
     source: script(['// @name x', '// @match https://*.shopee.tw/*']),
   });
 
-  assert.equal(result.targets[0].status, 'needs-host');
+  assert.equal(result.targets[0].proxyable, 'needs-host');
   assert.equal(result.targets[0].siteId, 'shopee-tw');
   assert.equal(context.store.sites.get('shopee-tw').target_origin, 'https://shopee.tw');
   assert.ok(result.targets[0].reason.includes('子網域'));
@@ -128,10 +128,10 @@ test('被拒絕的 @match 不建站，但原因要留著', async (t) => {
   });
 
   const [rejected, ready] = result.targets;
-  assert.equal(rejected.status, 'rejected');
+  assert.equal(rejected.proxyable, 'rejected');
   assert.equal(rejected.siteId, null);
   assert.ok(rejected.reason.length > 0);
-  assert.equal(ready.status, 'ready');
+  assert.equal(ready.proxyable, 'ready');
 
   assert.deepEqual(
     context.store.sites.list().map((site) => site.id),

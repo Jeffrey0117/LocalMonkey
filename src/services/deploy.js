@@ -62,7 +62,7 @@ function excludesForHost(excludes, host) {
 
 function resolveTargets(store, parsed) {
   return parsed.targets.map((target) => {
-    if (target.status === 'rejected') return { ...target, siteId: null };
+    if (target.proxyable === 'rejected') return { ...target, siteId: null };
 
     const site = ensureSite(store, target);
     return { ...target, siteId: site.id };

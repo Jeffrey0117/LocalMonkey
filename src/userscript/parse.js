@@ -148,7 +148,7 @@ function resolveTargets(raw, notices) {
     return true;
   });
 
-  if (targets.length > 0 && targets.every((target) => target.status === 'rejected')) {
+  if (targets.length > 0 && targets.every((target) => target.proxyable === 'rejected')) {
     notices.push(
       notice('error', '所有 @match / @include 都無法轉成代理網站，請改寫成具體主機（見每一列的原因）'),
     );
@@ -201,6 +201,12 @@ function parseUserscript(source, options = {}) {
     author: trimmedOrNull(single(raw, 'author')),
     namespace: trimmedOrNull(single(raw, 'namespace')),
     icon: trimmedOrNull(single(raw, 'icon')) ?? trimmedOrNull(single(raw, 'iconurl')),
+
+    // 投遞模式會把這兩個換成 LocalMonkey 自己的端點（見 SPEC-console §8），
+    // 但解析階段要先原樣留著 —— 使用者得看得到腳本原本指向哪裡。
+    updateUrl: trimmedOrNull(single(raw, 'updateurl')),
+    downloadUrl: trimmedOrNull(single(raw, 'downloadurl')),
+
     runAt,
     grants: Object.freeze(grantInfo.grants),
     grantNone: grantInfo.grantNone,

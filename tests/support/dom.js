@@ -87,9 +87,23 @@ function createFakeDom(options = {}) {
   const fetchCalls = [];
   const timers = [];
 
-  const head = createElement('head');
-  const body = createElement('body');
-  const documentElement = createElement('html');
+  const clicks = [];
+  const objectUrls = [];
+  const revokedUrls = [];
+
+  /** 記下 .click()：GM_download 會用 <a download> + click，要驗它點了什麼 */
+  function trackedCreateElement(tagName) {
+    const element = createElement(tagName);
+    element.click = () => {
+      clicks.push(element);
+      element.dispatch('click', {});
+    };
+    return element;
+  }
+
+  const head = trackedCreateElement('head');
+  const body = trackedCreateElement('body');
+  const documentElement = trackedCreateElement('html');
   documentElement.appendChild(head);
   documentElement.appendChild(body);
 
@@ -118,7 +132,7 @@ function createFakeDom(options = {}) {
     body,
     documentElement,
     listeners: {},
-    createElement,
+    createElement: trackedCreateElement,
     createTextNode: (text) => ({ nodeType: 3, textContent: String(text) }),
     addEventListener(type, handler) {
       document.listeners[type] = [...(document.listeners[type] ?? []), handler];
@@ -145,6 +159,14 @@ function createFakeDom(options = {}) {
       return timers.length;
     },
     navigator: {},
+    URL: {
+      createObjectURL: (blob) => {
+        const url = 'blob:fake/' + (objectUrls.length + 1);
+        objectUrls.push({ url, blob });
+        return url;
+      },
+      revokeObjectURL: (url) => revokedUrls.push(url),
+    },
     fetch: (url, init) => {
       fetchCalls.push({ url, init });
       return Promise.resolve({
@@ -217,6 +239,8 @@ function createFakeDom(options = {}) {
   sandbox.globalThis = sandbox;
   window.window = window;
   window.self = window;
+  // 預設是「最上層頁面」；測 @noframes 的呼叫端可以覆蓋成別的物件來模擬 iframe
+  window.top = window;
 
   return {
     sandbox,
@@ -231,6 +255,10 @@ function createFakeDom(options = {}) {
     clipboardWrites,
     notifications,
     fetchCalls,
+    clicks,
+    objectUrls,
+    revokedUrls,
+    createElement: trackedCreateElement,
     drainTimers: () => {
       while (timers.length > 0) timers.shift()();
     },

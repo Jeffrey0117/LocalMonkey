@@ -87,7 +87,7 @@ test('⛔ 回歸：如果有人把 @match 的路徑照抄成 glob，比對會壞
 test('具體主機 → ready，組出 https target origin', () => {
   const result = classifyMatch('https://www.example.com/*');
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.host, 'www.example.com');
   assert.equal(result.scheme, 'https');
   assert.equal(result.targetOrigin, 'https://www.example.com');
@@ -99,7 +99,7 @@ test('具體主機 → ready，組出 https target origin', () => {
 test('萬用子網域 *.example.com → needs-host，提議 example.com', () => {
   const result = classifyMatch('https://*.example.com/items/*');
 
-  assert.equal(result.status, 'needs-host');
+  assert.equal(result.proxyable, 'needs-host');
   assert.equal(result.host, 'example.com');
   assert.equal(result.wildcardHost, true);
   assert.equal(result.targetOrigin, 'https://example.com');
@@ -110,7 +110,7 @@ test('萬用子網域 *.example.com → needs-host，提議 example.com', () => 
 test('<all_urls> → rejected，並說明反向代理必須指向具體主機', () => {
   const result = classifyMatch('<all_urls>');
 
-  assert.equal(result.status, 'rejected');
+  assert.equal(result.proxyable, 'rejected');
   assert.equal(result.host, null);
   assert.equal(result.targetOrigin, null);
   assert.ok(result.reason.length > 0);
@@ -119,19 +119,19 @@ test('<all_urls> → rejected，並說明反向代理必須指向具體主機', 
 
 test('*://*/* → rejected', () => {
   const result = classifyMatch('*://*/*');
-  assert.equal(result.status, 'rejected');
+  assert.equal(result.proxyable, 'rejected');
   assert.ok(result.reason.length > 0);
 });
 
 test('主機就是一個 * → rejected', () => {
-  assert.equal(classifyMatch('https://*/*').status, 'rejected');
-  assert.equal(classifyMatch('*').status, 'rejected');
+  assert.equal(classifyMatch('https://*/*').proxyable, 'rejected');
+  assert.equal(classifyMatch('*').proxyable, 'rejected');
 });
 
 test('*:// 視為 https', () => {
   const result = classifyMatch('*://example.com/*');
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.scheme, 'https');
   assert.equal(result.insecure, false);
 });
@@ -139,7 +139,7 @@ test('*:// 視為 https', () => {
 test('http:// 照收，但標示為不安全', () => {
   const result = classifyMatch('http://example.com/*');
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.scheme, 'http');
   assert.equal(result.targetOrigin, 'http://example.com');
   assert.equal(result.insecure, true);
@@ -148,7 +148,7 @@ test('http:// 照收，但標示為不安全', () => {
 test('file / ftp / chrome-extension 之類的 scheme → rejected', () => {
   for (const pattern of ['file:///C:/x/*', 'ftp://a.test/*', 'chrome-extension://abc/*']) {
     const result = classifyMatch(pattern);
-    assert.equal(result.status, 'rejected', pattern);
+    assert.equal(result.proxyable, 'rejected', pattern);
     assert.ok(result.reason.length > 0, pattern);
   }
 });
@@ -156,14 +156,14 @@ test('file / ftp / chrome-extension 之類的 scheme → rejected', () => {
 test('主機中間有萬用字元（www.*.com）→ rejected，不要猜', () => {
   const result = classifyMatch('https://www.*.com/*');
 
-  assert.equal(result.status, 'rejected');
+  assert.equal(result.proxyable, 'rejected');
   assert.ok(/萬用|無法/.test(result.reason), result.reason);
 });
 
 test('主機帶 port 時保留 port', () => {
   const result = classifyMatch('http://localhost:3000/*');
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.host, 'localhost:3000');
   assert.equal(result.targetOrigin, 'http://localhost:3000');
 });
@@ -175,14 +175,14 @@ test('主機大小寫正規化成小寫', () => {
 test('沒有路徑的 @match 等於整站', () => {
   const result = classifyMatch('https://example.com');
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.pathGlob, '*');
 });
 
 test('亂七八糟的輸入不會丟錯，一律 rejected 並附原因', () => {
   for (const pattern of ['', '   ', 'not a pattern', 'https://', '://x/*', null, undefined, 42]) {
     const result = classifyMatch(pattern);
-    assert.equal(result.status, 'rejected', JSON.stringify(pattern));
+    assert.equal(result.proxyable, 'rejected', JSON.stringify(pattern));
     assert.ok(typeof result.reason === 'string' && result.reason.length > 0);
   }
 });
@@ -190,7 +190,7 @@ test('亂七八糟的輸入不會丟錯，一律 rejected 並附原因', () => {
 test('超長路徑（glob 長度超過 lib/glob.js 的上限）→ rejected', () => {
   const result = classifyMatch(`https://example.com/${'a'.repeat(MAX_PATTERN_LENGTH + 10)}`);
 
-  assert.equal(result.status, 'rejected');
+  assert.equal(result.proxyable, 'rejected');
   assert.ok(/長/.test(result.reason), result.reason);
 });
 
@@ -201,26 +201,26 @@ test('超長路徑（glob 長度超過 lib/glob.js 的上限）→ rejected', ()
 test('@include 沒有 scheme 也吃得下', () => {
   const result = classifyMatch('example.com/items/*', { kind: 'include' });
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.host, 'example.com');
   assert.equal(result.pathGlob, '/items/**');
 });
 
 test('@include 允許 *.example.com/* → needs-host', () => {
   const result = classifyMatch('*://*.example.com/*', { kind: 'include' });
-  assert.equal(result.status, 'needs-host');
+  assert.equal(result.proxyable, 'needs-host');
   assert.equal(result.host, 'example.com');
 });
 
 test('@include 的 * 主機 → 照樣 rejected', () => {
-  assert.equal(classifyMatch('*', { kind: 'include' }).status, 'rejected');
-  assert.equal(classifyMatch('http://*/*', { kind: 'include' }).status, 'rejected');
+  assert.equal(classifyMatch('*', { kind: 'include' }).proxyable, 'rejected');
+  assert.equal(classifyMatch('http://*/*', { kind: 'include' }).proxyable, 'rejected');
 });
 
 test('正則形式的 @include：抽得出字面主機 → ready，但路徑放寬並留下警告', () => {
   const result = classifyMatch('/^https://www\\.example\\.com/items/\\d+/', { kind: 'include' });
 
-  assert.equal(result.status, 'ready');
+  assert.equal(result.proxyable, 'ready');
   assert.equal(result.host, 'www.example.com');
   assert.equal(result.pathGlob, '*');
   assert.ok(result.warning && result.warning.length > 0, '放寬成整站這件事要講出來');
@@ -229,7 +229,7 @@ test('正則形式的 @include：抽得出字面主機 → ready，但路徑放�
 test('正則形式的 @include：抽不出主機 → rejected，而且不要猜', () => {
   for (const pattern of ['/^https?:\\/\\/.*\\/items/', '/\\w+\\.example\\.com/', '/.*/']) {
     const result = classifyMatch(pattern, { kind: 'include' });
-    assert.equal(result.status, 'rejected', pattern);
+    assert.equal(result.proxyable, 'rejected', pattern);
     assert.ok(/正則|無法|主機/.test(result.reason), `${pattern} → ${result.reason}`);
   }
 });

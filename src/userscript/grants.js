@@ -23,6 +23,7 @@ const SUPPORTED_GRANTS = Object.freeze([
   'GM_getResourceText',
   'GM_getResourceURL',
   'GM_xmlhttpRequest',
+  'GM_download',
 ]);
 
 const CANONICAL_BY_LOWER = new Map(

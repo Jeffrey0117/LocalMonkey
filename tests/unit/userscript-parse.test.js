@@ -242,7 +242,7 @@ test('全部 target 都被拒 → 留下一則 error 提示', () => {
   const parsed = parseUserscript(script(['// @match <all_urls>']));
 
   assert.equal(parsed.targets.length, 1);
-  assert.equal(parsed.targets[0].status, 'rejected');
+  assert.equal(parsed.targets[0].proxyable, 'rejected');
   assert.ok(parsed.notices.some((notice) => notice.level === 'error'));
 });
 
