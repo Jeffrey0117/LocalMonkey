@@ -446,7 +446,7 @@ test('metadata 存的就是解析結果（後端與前端看同一份）', async
       '// @match https://a.test/*',
       '// @connect api.test',
       '// @grant GM_setValue',
-      '// @grant GM_download',
+      '// @grant GM_cookie',
       '// @noframes',
     ]),
   });
@@ -454,7 +454,7 @@ test('metadata 存的就是解析結果（後端與前端看同一份）', async
   const { metadata } = result.script;
   assert.equal(metadata.hasMetadataBlock, true);
   assert.deepEqual(metadata.connect, ['api.test']);
-  assert.deepEqual(metadata.unsupportedGrants, ['GM_download']);
+  assert.deepEqual(metadata.unsupportedGrants, ['GM_cookie']);
   assert.equal(metadata.noframes, true);
   assert.equal(metadata.needsShim, true);
   assert.equal(result.script.description, '說明');

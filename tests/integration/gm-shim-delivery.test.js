@@ -174,15 +174,15 @@ test('不支援的 GM API 會進 shim config 的 unsupported（前端才能標�
     userscript([
       '// @name 用到沒支援的',
       '// @match https://demo.test/*',
-      '// @grant GM_download',
-    ], 'GM_download("https://x.test/a.zip");'),
+      '// @grant GM_cookie',
+    ], 'GM_cookie({ action: "list" });'),
   );
 
   const shim = (await rawRequest({ port: app.port, path: `/__lm/shim/${script.id}.js` })).text;
   const config = JSON.parse(shim.slice(shim.lastIndexOf('install(') + 'install('.length, shim.lastIndexOf(');')));
 
-  assert.deepEqual(config.unsupported, ['GM_download']);
-  assert.deepEqual(config.grants, ['GM_download']);
+  assert.deepEqual(config.unsupported, ['GM_cookie']);
+  assert.deepEqual(config.grants, ['GM_cookie']);
 });
 
 test('shim config 帶 @connect、@match 與 GM_info 要的欄位', async (t) => {

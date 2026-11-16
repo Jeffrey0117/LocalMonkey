@@ -413,7 +413,7 @@ test('shim 自己完全不碰頁面的全域名字（只掛一個 __localMonkey�
   install(dom, config({ grants: ['GM_setValue'] }));
 
   const added = Object.keys(dom.window).filter(
-    (key) => !['document', 'location', 'localStorage', 'open', 'setTimeout', 'clearTimeout', 'requestIdleCallback', 'navigator', 'URL', 'fetch', 'Notification', 'window', 'self'].includes(key),
+    (key) => !['document', 'location', 'localStorage', 'open', 'setTimeout', 'clearTimeout', 'requestIdleCallback', 'navigator', 'URL', 'fetch', 'Notification', 'window', 'self', 'top'].includes(key),
   );
 
   assert.deepEqual(added, ['__localMonkey']);

@@ -84,8 +84,8 @@ test('@grant 收成清單，並分成支援與不支援兩堆', () => {
       '// @grant GM_setValue',
       '// @grant GM_getValue',
       '// @grant GM_addStyle',
-      '// @grant GM_download',
       '// @grant GM_cookie',
+      '// @grant GM_fakeThing',
     ]),
   );
 
@@ -93,14 +93,14 @@ test('@grant 收成清單，並分成支援與不支援兩堆', () => {
     'GM_setValue',
     'GM_getValue',
     'GM_addStyle',
-    'GM_download',
     'GM_cookie',
+    'GM_fakeThing',
   ]);
   assert.deepEqual(parsed.supportedGrants, ['GM_setValue', 'GM_getValue', 'GM_addStyle']);
-  assert.deepEqual(parsed.unsupportedGrants, ['GM_download', 'GM_cookie']);
+  assert.deepEqual(parsed.unsupportedGrants, ['GM_cookie', 'GM_fakeThing']);
   assert.equal(parsed.needsShim, true);
   assert.ok(
-    parsed.notices.some((notice) => notice.level === 'error' && /GM_download/.test(notice.message)),
+    parsed.notices.some((notice) => notice.level === 'error' && /GM_cookie/.test(notice.message)),
     '不支援的 GM API 要用紅字講出來',
   );
 });
