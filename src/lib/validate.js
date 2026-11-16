@@ -269,6 +269,11 @@ function validateUserscriptUpdate(input) {
   rejectImmutableField(input, 'site_id', errors);
   rejectImmutableField(input, 'metadata', errors);
 
+  // bumpVersion 不是要存的欄位，是「存檔時順便把版本 +1」的指令（見 routes/admin-api.js）
+  if ('bumpVersion' in input && typeof input.bumpVersion !== 'boolean') {
+    errors.push({ field: 'bumpVersion', message: 'bumpVersion 只接受 true/false' });
+  }
+
   const patch = {};
   if ('source' in input) patch.source = checkSource(input.source, errors);
   if ('enabled' in input) patch.enabled = checkEnabled(input.enabled, errors);

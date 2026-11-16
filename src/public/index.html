@@ -52,6 +52,26 @@
           -->
           <div class="info-row" id="info-row"></div>
 
+          <!--
+            投遞模式（SPEC-console §8）：給 Tampermonkey 直接安裝的網址。
+            腳本跑在 Tampermonkey 裡，所以 GM_* 全部原生可用、登入站也正常。
+          -->
+          <div class="info-row delivery-row" id="delivery-row" hidden>
+            <div class="info-cell">
+              <span class="info-label">安裝</span>
+              <span class="info-value">
+                <code id="delivery-url" class="delivery-url"></code>
+                <button type="button" class="ghost" id="delivery-copy">複製</button>
+                <button type="button" class="ghost" id="delivery-open">開啟安裝</button>
+                <button type="button" class="ghost" id="delivery-rotate">重新產生網址</button>
+              </span>
+            </div>
+            <p class="notice is-bad" id="version-hint" hidden>
+              <span id="version-hint-text"></span>
+              <button type="button" class="ghost" id="version-bump">版本 +1 並儲存</button>
+            </p>
+          </div>
+
           <div class="editor-host">
             <textarea id="editor" spellcheck="false"></textarea>
           </div>

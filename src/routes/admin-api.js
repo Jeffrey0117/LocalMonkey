@@ -15,9 +15,15 @@ const { assertOriginAllowed, SsrfBlockedError } = require('../lib/ssrf.js');
 const { DuplicateIdError, NotFoundError } = require('../db/errors.js');
 const { parseUserscript } = require('../userscript/parse.js');
 const { deployUserscript, DeployError } = require('../services/deploy.js');
+const {
+  buildDeliveryUrl,
+  bumpVersion,
+  versionOf,
+  isVersionBumped,
+} = require('../services/delivery.js');
 
 /** v2 的腳本只接受這些輸入欄位；其他（code / match_glob / run_at…）是 v1 的相容欄位 */
-const V2_SCRIPT_KEYS = new Set(['source', 'enabled', 'order_index', 'fallbackName']);
+const V2_SCRIPT_KEYS = new Set(['source', 'enabled', 'order_index', 'fallbackName', 'bumpVersion']);
 
 function isV2OnlyBody(body) {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return false;
@@ -98,7 +104,7 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
    * （code / site_id / match_glob）。v1 的後台與既有測試讀的是別名，v2 的控制台
    * 讀的是前者，兩邊同一個端點。
    */
-  function scriptResponse(scriptId) {
+  function scriptResponse(scriptId, req) {
     const script = store.userscripts.get(scriptId);
     if (!script) return null;
 
@@ -109,6 +115,8 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
       code: script.source,
       site_id: legacy?.site_id ?? null,
       match_glob: legacy?.match_glob ?? null,
+      // 安裝網址用「這個請求的 Host」組 —— 從 127.0.0.1 / 區網 IP / tunnel 來看都要對
+      deliveryUrl: req ? buildDeliveryUrl(req, script) : null,
     };
   }
 
@@ -220,14 +228,14 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
     const deployed = await deployUserscript(deployContext, result.value);
 
     res.status(201).json({
-      script: scriptResponse(deployed.script.id),
+      script: scriptResponse(deployed.script.id, req),
       targets: deployed.targets,
       warnings: deployed.warnings,
     });
   });
 
   router.get('/scripts/:scriptId', (req, res) => {
-    const script = scriptResponse(req.params.scriptId);
+    const script = scriptResponse(req.params.scriptId, req);
     if (!script) {
       sendNotFound(res, `找不到腳本「${req.params.scriptId}」`);
       return;
@@ -252,15 +260,29 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
         return;
       }
 
+      const previousVersion = versionOf(store.userscripts.get(req.params.scriptId).source);
+
+      // `bumpVersion: true` 來自 UI 的「版本 +1 並儲存」。刻意由伺服器改 source
+      // （而不是前端自己改）—— 這樣畫面上的 source 跟實際投遞的永遠是同一份。
+      const source = req.body.bumpVersion === true
+        ? bumpVersion(result.value.source)
+        : result.value.source;
+
       const deployed = await deployUserscript(deployContext, {
         ...result.value,
+        source,
         scriptId: req.params.scriptId,
       });
 
       res.json({
-        script: scriptResponse(deployed.script.id),
+        script: scriptResponse(deployed.script.id, req),
         targets: deployed.targets,
         warnings: deployed.warnings,
+        // ⛔ Tampermonkey 只有在遠端 @version 比本地高時才更新。版本沒往上走的話，
+        //    使用者改完存檔會以為好了，但所有裝置原地不動 —— 一定要回報。
+        version: deployed.script.version,
+        previousVersion,
+        versionBumped: isVersionBumped(previousVersion, deployed.script.version),
       });
       return;
     }
@@ -276,7 +298,7 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
       }
 
       store.userscripts.update(req.params.scriptId, v2Only.value);
-      res.json({ script: scriptResponse(req.params.scriptId) });
+      res.json({ script: scriptResponse(req.params.scriptId, req) });
       return;
     }
 
@@ -287,7 +309,21 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
     }
 
     store.scripts.update(req.params.scriptId, legacy.value);
-    res.json({ script: scriptResponse(req.params.scriptId) });
+    res.json({ script: scriptResponse(req.params.scriptId, req) });
+  });
+
+  /**
+   * 重新產生投遞 token＝撤銷舊的安裝網址。
+   * 已經裝好的裝置之後會更新失敗（404），要重新安裝 —— UI 要先警告。
+   */
+  router.post('/scripts/:scriptId/delivery-token/rotate', (req, res) => {
+    if (!store.userscripts.get(req.params.scriptId)) {
+      sendNotFound(res, `找不到腳本「${req.params.scriptId}」`);
+      return;
+    }
+
+    store.userscripts.rotateDeliveryToken(req.params.scriptId);
+    res.json({ script: scriptResponse(req.params.scriptId, req) });
   });
 
   router.delete('/scripts/:scriptId', (req, res) => {

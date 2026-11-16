@@ -57,6 +57,10 @@ window.LocalMonkeyApi = (function createApi() {
     saveScript: (scriptId, patch) => request('PUT', `/scripts/${id(scriptId)}`, patch),
     deleteScript: (scriptId) => request('DELETE', `/scripts/${id(scriptId)}`),
 
+    /** 重新產生投遞 token＝撤銷舊的安裝網址（已安裝的裝置要重裝） */
+    rotateDeliveryToken: (scriptId) =>
+      request('POST', `/scripts/${id(scriptId)}/delivery-token/rotate`, {}).then((data) => data.script),
+
     /* ---------------- 網站（唯讀清單 + 啟用開關 / 指定主機） ---------------- */
 
     getSettings: () => request('GET', '/settings').then((data) => data.settings),

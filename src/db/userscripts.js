@@ -10,6 +10,7 @@
 
 const { NotFoundError } = require('./errors.js');
 const { newId, nowIso } = require('../lib/ids.js');
+const { newDeliveryToken } = require('../services/delivery.js');
 
 const UPDATABLE_COLUMNS = Object.freeze([
   'name',
@@ -91,6 +92,7 @@ function mapScript(row) {
     run_at: row.run_at,
     enabled: row.enabled === 1,
     order_index: row.order_index,
+    delivery_token: row.delivery_token,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -133,11 +135,12 @@ function createUserscript(db, input) {
 
   db.prepare(
     `INSERT INTO scripts
-       (id, name, version, description, source, metadata, run_at, enabled, order_index, created_at, updated_at)
+       (id, name, version, description, source, metadata, run_at, enabled, order_index, delivery_token, created_at, updated_at)
      VALUES
-       (@id, @name, @version, @description, @source, @metadata, @run_at, @enabled, @order_index, @created_at, @updated_at)`,
+       (@id, @name, @version, @description, @source, @metadata, @run_at, @enabled, @order_index, @delivery_token, @created_at, @updated_at)`,
   ).run({
     id,
+    delivery_token: newDeliveryToken(),
     name: input.name,
     version: input.version ?? null,
     description: input.description ?? null,
@@ -269,6 +272,30 @@ function listForInjection(db, siteId) {
     }));
 }
 
+/**
+ * 用投遞 token 找腳本。查無一律回 null —— 呼叫端要回 404，不能洩漏腳本存不存在。
+ */
+function getByDeliveryToken(db, token) {
+  if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return null;
+
+  const row = db.prepare('SELECT * FROM scripts WHERE delivery_token = ?').get(token);
+  if (!row) return null;
+
+  return { ...mapScript(row), sites: listBindings(db, row.id) };
+}
+
+/** 重新產生 token＝撤銷舊網址（已安裝的裝置之後會更新失敗，要重裝） */
+function rotateDeliveryToken(db, id) {
+  const token = newDeliveryToken();
+  const result = db
+    .prepare('UPDATE scripts SET delivery_token = ?, updated_at = ? WHERE id = ?')
+    .run(token, nowIso(), id);
+
+  if (result.changes === 0) throw new NotFoundError(`找不到腳本「${id}」`);
+
+  return getUserscript(db, id);
+}
+
 /** 這支腳本掛在幾個站（legacy 相容層要用來判斷 match_glob 能不能改） */
 function countBindings(db, scriptId) {
   return db
@@ -285,6 +312,8 @@ module.exports = {
   removeUserscript,
   setBindings,
   listBindings,
+  getByDeliveryToken,
+  rotateDeliveryToken,
   countBindings,
   scriptExists,
   legacyMetadata,

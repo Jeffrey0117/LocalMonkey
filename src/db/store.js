@@ -41,6 +41,8 @@ function createStore(db) {
       update: (id, patch) => userscripts.updateUserscript(db, id, patch),
       remove: (id) => userscripts.removeUserscript(db, id),
       setBindings: (id, bindings) => userscripts.setBindings(db, id, bindings),
+      getByDeliveryToken: (token) => userscripts.getByDeliveryToken(db, token),
+      rotateDeliveryToken: (id) => userscripts.rotateDeliveryToken(db, id),
       listBindings: (id) => userscripts.listBindings(db, id),
     },
     assets: {

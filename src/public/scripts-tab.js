@@ -2,7 +2,7 @@
 'use strict';
 
 window.LocalMonkeyScriptsTab = (function createScriptsTab() {
-  const { escapeHtml, byId, debounce, banner, delegate } = window.LocalMonkeyUi;
+  const { escapeHtml, byId, debounce, banner, delegate, copyText } = window.LocalMonkeyUi;
   const api = window.LocalMonkeyApi;
   const infoBar = window.LocalMonkeyInfoBar;
 
@@ -52,6 +52,42 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     }
   }, PARSE_DELAY_MS);
 
+  /** 投遞模式的安裝網址（SPEC-console §8） */
+  function renderDelivery(script) {
+    const row = byId('delivery-row');
+    if (!script.deliveryUrl) {
+      row.hidden = true;
+      return;
+    }
+
+    row.hidden = false;
+    byId('delivery-url').textContent = script.deliveryUrl;
+    hideVersionHint();
+  }
+
+  function hideVersionHint() {
+    byId('version-hint').hidden = true;
+  }
+
+  /**
+   * ⛔ Tampermonkey 只有在遠端 @version 比本地高時才更新。版本沒往上走的話，
+   *    使用者改完存檔會以為好了，但所有裝置原地不動 —— 一定要講出來。
+   */
+  function showVersionHint(result) {
+    const hint = byId('version-hint');
+    if (result.versionBumped !== false) {
+      hint.hidden = true;
+      return;
+    }
+
+    byId('version-hint-text').textContent =
+      result.version === null || result.version === undefined
+        ? '這支腳本沒有 @version —— Tampermonkey 永遠不會自動更新它。'
+        : `版本號還是 ${result.version}，Tampermonkey 不會更新到這一版。`;
+
+    hint.hidden = false;
+  }
+
   async function select(scriptId) {
     try {
       const script = await api.getScript(scriptId);
@@ -62,6 +98,8 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
       byId('editor-title').textContent = script.name;
       byId('editor-enabled').checked = script.enabled;
       byId('editor-enabled-label').textContent = script.enabled ? '啟用' : '停用';
+
+      renderDelivery(script);
 
       showPane(true);
       state.editor.setValue(script.source);
@@ -74,17 +112,26 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     }
   }
 
-  async function save() {
+  async function save({ bumpVersion = false } = {}) {
     if (!state.selectedId) return;
 
     try {
       const result = await api.saveScript(state.selectedId, {
         source: state.editor.getValue(),
         enabled: byId('editor-enabled').checked,
+        ...(bumpVersion ? { bumpVersion: true } : {}),
       });
 
       state.loaded = result.script;
       byId('editor-title').textContent = result.script.name;
+
+      // 伺服器可能改過 source（版本 +1），讓編輯器跟著同步，不要兩份不一樣
+      if (result.script.source !== state.editor.getValue()) {
+        state.editor.setValue(result.script.source);
+      }
+
+      renderDelivery(result.script);
+      showVersionHint(result);
 
       const created = (result.targets ?? []).filter((target) => target.siteId !== null).length;
       const warnings = result.warnings ?? [];
@@ -147,7 +194,33 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
       select(item.dataset.scriptId);
     });
 
-    byId('editor-save').addEventListener('click', save);
+    byId('editor-save').addEventListener('click', () => save());
+
+    byId('version-bump').addEventListener('click', () => save({ bumpVersion: true }));
+
+    byId('delivery-copy').addEventListener('click', () => {
+      if (state.loaded?.deliveryUrl) copyText(state.loaded.deliveryUrl);
+    });
+
+    byId('delivery-open').addEventListener('click', () => {
+      if (state.loaded?.deliveryUrl) window.open(state.loaded.deliveryUrl, '_blank', 'noopener');
+    });
+
+    byId('delivery-rotate').addEventListener('click', async () => {
+      // eslint-disable-next-line no-alert
+      if (!window.confirm('重新產生網址會讓舊網址失效。已經裝好的裝置之後會更新失敗，要重新安裝。要繼續嗎？')) {
+        return;
+      }
+
+      try {
+        const script = await api.rotateDeliveryToken(state.selectedId);
+        state.loaded = script;
+        renderDelivery(script);
+        banner.show('已換成新的安裝網址。舊網址已失效，請在各裝置重新安裝。', 'warn');
+      } catch (error) {
+        banner.error(error);
+      }
+    });
     byId('editor-delete').addEventListener('click', remove);
     byId('editor-enabled').addEventListener('change', (event) => {
       byId('editor-enabled-label').textContent = event.target.checked ? '啟用' : '停用';

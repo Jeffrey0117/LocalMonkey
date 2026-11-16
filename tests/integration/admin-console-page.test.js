@@ -95,6 +95,10 @@ test('/admin 回控制台的骨架（分頁、丟腳本、編輯器容器）', a
     'id="script-list"',
     'id="site-rows"',
     'id="drop-targets"',
+    'id="delivery-url"',
+    'id="delivery-rotate"',
+    'id="version-hint"',
+    'id="version-bump"',
   ]) {
     assert.ok(response.text.includes(marker), `骨架少了 ${marker}`);
   }

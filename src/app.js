@@ -4,6 +4,7 @@ const express = require('express');
 
 const { createInternalRouter } = require('./routes/internal.js');
 const { createGmXhrRouter } = require('./routes/gm-xhr.js');
+const { createDeliveryRouter } = require('./routes/delivery.js');
 const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
@@ -42,6 +43,9 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
   app.use('/__lm/gm', createGmXhrRouter({ store, config, logger, fetchImpl }));
   app.use('/__lm', createInternalRouter({ store }));
   app.use('/admin', createAdminRouter({ store, config, adminToken, logger, fetchImpl }));
+
+  // 投遞給 Tampermonkey。免認證（憑證是路徑裡的 token），要排在代理的 catch-all 之前。
+  app.use('/s', createDeliveryRouter({ store, config, logger }));
 
   // 主路由
   app.all('/p/:siteId', handleProxyRoute);

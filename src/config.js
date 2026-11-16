@@ -14,6 +14,8 @@ const DEFAULTS = Object.freeze({
   gmXhrMaxRequestBytes: 1024 * 1024,
   gmXhrRateLimit: 60,
   gmXhrRateWindowMs: 60_000,
+  deliveryRateLimit: 120,
+  deliveryRateWindowMs: 60_000,
   assetTimeoutMs: 15_000,
   assetMaxBytes: 5 * 1024 * 1024,
 });
@@ -56,6 +58,18 @@ function loadConfig(env = process.env) {
       { min: 1, max: 1024 * 1024 * 1024 },
     ),
     logLevel: parseToken(env.LOCALMONKEY_LOG_LEVEL) ?? 'info',
+
+    // GET /s/<token>/<slug>.user.js（投遞給 Tampermonkey）
+    delivery: {
+      rateLimit: parseInteger(env.LOCALMONKEY_DELIVERY_RATE, DEFAULTS.deliveryRateLimit, {
+        min: 1,
+        max: 100_000,
+      }),
+      rateWindowMs: parseInteger(env.LOCALMONKEY_DELIVERY_WINDOW_MS, DEFAULTS.deliveryRateWindowMs, {
+        min: 1,
+        max: 3_600_000,
+      }),
+    },
 
     // 存腳本時在伺服器端抓 @require / @resource
     assetTimeoutMs: parseInteger(env.LOCALMONKEY_ASSET_TIMEOUT_MS, DEFAULTS.assetTimeoutMs, {

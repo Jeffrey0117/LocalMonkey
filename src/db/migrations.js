@@ -150,6 +150,30 @@ function upgradeToV2(db) {
   db.exec('DROP TABLE scripts_v1;');
 }
 
+/**
+ * v3：投遞模式（SPEC-console §8）。
+ *
+ * 每支腳本一組不可猜的 token，`GET /s/<token>/<slug>.user.js` 靠它當憑證 ——
+ * Tampermonkey 抓腳本時帶不了 admin token，所以那個端點必須免認證。
+ *
+ * UNIQUE 索引在 SQLite 容許多個 NULL，所以先加欄位再回填既有資料。
+ */
+const SCHEMA_V3 = `
+ALTER TABLE scripts ADD COLUMN delivery_token TEXT;
+CREATE UNIQUE INDEX idx_scripts_delivery_token ON scripts (delivery_token);
+`;
+
+function upgradeToV3(db) {
+  db.exec(SCHEMA_V3);
+
+  const rows = db.prepare('SELECT id FROM scripts').all();
+  const update = db.prepare('UPDATE scripts SET delivery_token = ? WHERE id = ?');
+
+  for (const row of rows) {
+    update.run(require('node:crypto').randomBytes(32).toString('hex'), row.id);
+  }
+}
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -158,6 +182,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 2,
     up: upgradeToV2,
+  }),
+  Object.freeze({
+    version: 3,
+    up: upgradeToV3,
   }),
 ]);
 

@@ -18,6 +18,11 @@ async function startApp(options = {}) {
     upstreamTimeoutMs: 5_000,
     maxRequestBodyBytes: 1024 * 1024,
     ...options.config,
+    delivery: {
+      rateLimit: 1000,
+      rateWindowMs: 60_000,
+      ...options.config?.delivery,
+    },
     gmXhr: {
       timeoutMs: 5_000,
       maxResponseBytes: 1024 * 1024,

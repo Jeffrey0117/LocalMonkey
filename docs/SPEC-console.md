@@ -246,3 +246,96 @@ DELETE /admin/api/sites/:id
 4. commit + push
 
 commit 身分 `Jeffrey0117 <jeffby8@gmail.com>`，不准任何 Claude / Co-Authored-By 署名。
+
+---
+
+## §8 `.user.js` 投遞端點（讓 Tampermonkey 直接裝 + 自動更新）
+
+### 動機
+
+使用者實際的 7 支腳本有 6 支打 IG / Threads / X —— 要登入的 SPA、多主機、有風控，走反向代理做出來不會想用。而他**已經在做**正確的事：`ig-helper` 與 `xpost-card` 的 header 有 `@updateURL http://localhost:8001/scripts/...`，AutoReel 的 `backend/main.py` 手刻了 5 條路由在餵 `.user.js` 給 Tampermonkey。
+
+LocalMonkey 直接取代那個角色：**在控制台用 CodeMirror 編輯 → 存檔 → 所有裝置的 Tampermonkey 自動更新**。腳本跑在 Tampermonkey 裡，所以 `GM_*` 全部原生可用、不碰 IG 風控、`*://*/*` 也能用。
+
+**於是 LocalMonkey 有兩種投遞模式，每支腳本可以各自選：**
+
+| | 代理模式（v1/v2 既有） | 投遞模式（本節新增） |
+|---|---|---|
+| 怎麼跑 | 經過代理網址，由伺服器注入 | Tampermonkey 從端點裝，跑在原站 |
+| GM API | 靠我們的 shim | 原生，全支援 |
+| 需要擴充功能 | 不用 | 要裝 Tampermonkey |
+| 登入站/SPA | 多半會壞 | 正常 |
+| `*://*/*` | 做不到 | 可以 |
+
+### ⛔ 連帶的規格修正（§3.2）
+
+原本 `*://*/*`、`<all_urls>` 判為 `rejected`。**那個判斷只對代理模式成立。**
+
+改成兩個獨立欄位：
+- `proxyable`：能不能建站代理（`ready` / `needs-host` / `rejected` + 原因）
+- `deliverable`：**永遠為 true**，任何腳本都能投遞
+
+UI 不要再說「這支不支援」，要說「這支不能用代理模式（原因…），但可以用投遞模式」。revid-subs 那支使用者一定會拿來試。
+
+### 端點
+
+```
+GET /s/<token>/<slug>.user.js
+```
+
+- `<token>`：每支腳本一組 32 bytes 隨機 hex，存在 `scripts.delivery_token`（建立時產生，可在 UI 重新產生＝撤銷舊網址）
+- **為什麼用路徑 token**：Tampermonkey 抓腳本時帶不了 admin bearer token，所以這個端點必須免認證。但腳本內容可能含金鑰（他的腳本就在打自己的後端），裸奔不行。不可猜的路徑 token 是這類問題的標準解。
+- `<slug>`：人類可讀（從 `@name` 正規化），只為了讓 Tampermonkey 顯示好看的檔名，**不參與驗證**
+- Token 查無 → **404**（不要 403，不要確認腳本是否存在）
+- 停用的腳本 → 404
+- `Content-Type: text/javascript; charset=utf-8` ← **一定要這個**。`text/plain` 會讓 Tampermonkey 不觸發安裝
+- `Cache-Control: no-cache`，但要給 `ETag`（source 的 sha256）與 `Last-Modified`（`updated_at`），並正確處理 `If-None-Match` 回 304 —— 更新檢查很頻繁，別每次都傳整份
+- 回傳 `source` **原文含 metadata header**（那就是安裝清單），但要先做下面的改寫
+- 簡單速率限制
+
+### 投遞時改寫 header（關鍵，少了這段整個功能沒意義）
+
+回傳前把 header 裡的 `@updateURL` / `@downloadURL` 換成**本端點的絕對網址**，沒有就補上。否則 Tampermonkey 會繼續去 `localhost:8001` 更新，等於白做。
+
+絕對網址的 host **從請求的 `Host` header 取**，不要從設定檔讀 —— 使用者會從 `127.0.0.1`、區網 IP、或 tunnel 網域來裝，每種都要給對應的網址。（這條是踩過的坑：後端自己組對外網址，在代理後面會組出內部位址。）
+
+改寫只動投遞出去的那份，**不要改資料庫裡的 `source`**。
+
+### ⛔ 版本號：最容易做出「看起來好了其實沒更新」的地方
+
+**Tampermonkey 只有在遠端 `@version` 比本地高時才更新。** 使用者在控制台改完存檔、版本號沒動 → 所有裝置原地不動 → 他會以為功能壞了。
+
+不要偷偷幫他改版本號（那會讓畫面上的 source 跟實際投遞的不一致）。做成明確的：
+
+- 儲存時比對新舊 `@version`。沒變或變小 → 回應帶 `versionBumped: false`
+- UI 顯示明顯的提示：**「版本號沒變，Tampermonkey 不會更新到這一版」**，旁邊一顆「版本 +1 並儲存」按鈕（自動把最後一段數字加一，沒有 `@version` 就補 `1.0.0`）
+- 沒有 `@version` 的腳本也要提示：沒有版本號 = 永遠不會自動更新
+
+### UI（腳本分頁的資訊列下方）
+
+- **安裝網址**：可複製的完整 URL + 「開啟安裝」按鈕
+- **重新產生網址**：撤銷舊的（警告：已安裝的裝置會更新失敗，要重裝）
+- 顯示 `@updateURL` 會被改寫成什麼
+- 版本提示（上面那條）
+
+### API
+
+```
+POST /admin/api/scripts/:id/delivery-token/rotate   重新產生 token
+```
+`GET /admin/api/scripts/:id` 的回應要帶 `deliveryUrl`（用請求的 Host 組）。
+
+### 測試
+
+- `.user.js` 的 `Content-Type` 正確（**這條錯了整個功能靜默失效**）
+- 錯 token / 不存在 token / 停用的腳本 → 全部 404，且回應內容不洩漏腳本是否存在
+- `If-None-Match` 命中 → 304 且無 body
+- 投遞出的內容裡 `@updateURL`/`@downloadURL` 已改寫成本端點；原本沒有這兩個 key 的也會被補上；DB 裡的 `source` 沒被改
+- 改寫用的是請求的 `Host`（用不同 Host header 打同一支，拿到不同的絕對網址）
+- 版本沒變 → `versionBumped: false`；「版本 +1」把 `1.2.3` 變 `1.2.4`、沒有 `@version` 的補上
+- token rotate 後舊網址 404、新網址 200
+- **用那 7 支真實腳本當 fixture 跑一遍投遞**，特別是 `revid-subs`（`*://*/*`，代理模式 rejected 但投遞模式必須正常）
+
+### 不做
+
+自動更新的伺服器推送、腳本市集、簽章。Tampermonkey 自己的週期性檢查就夠了。
