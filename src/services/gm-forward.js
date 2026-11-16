@@ -13,6 +13,8 @@
  *   3. 回應有大小上限（邊讀邊數，不是先吞進記憶體再檢查）。
  */
 
+const { readCapped, ContentTooLargeError } = require('../lib/read-capped.js');
+
 const ALLOWED_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
 const MAX_REDIRECTS = 5;
 
@@ -93,57 +95,6 @@ function filterResponseHeaders(headers) {
   return result;
 }
 
-/** 邊讀邊數，超過上限就停手（已經讀到的照回，標成 truncated） */
-async function readCapped(response, maxBytes) {
-  const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > maxBytes) {
-    throw new GmForwardError(
-      'response_too_large',
-      `上游回應宣告 ${declared} bytes，超過上限 ${maxBytes}`,
-      { status: 413 },
-    );
-  }
-
-  const body = response.body;
-  if (!body || typeof body.getReader !== 'function') {
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.length > maxBytes
-      ? { buffer: buffer.subarray(0, maxBytes), truncated: true }
-      : { buffer, truncated: false };
-  }
-
-  const reader = body.getReader();
-  const chunks = [];
-  let total = 0;
-  let truncated = false;
-
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-
-    const chunk = Buffer.from(value);
-    const room = maxBytes - total;
-
-    if (chunk.length >= room) {
-      chunks.push(chunk.subarray(0, Math.max(0, room)));
-      total = maxBytes;
-      truncated = true;
-      try {
-        await reader.cancel();
-      } catch {
-        /* 上游已經斷了也沒關係 */
-      }
-      break;
-    }
-
-    chunks.push(chunk);
-    total += chunk.length;
-  }
-
-  return { buffer: Buffer.concat(chunks), truncated };
-}
-
 function resolveRedirect(location, currentUrl) {
   try {
     return new URL(location, currentUrl);
@@ -220,15 +171,23 @@ async function forwardGmRequest({
       continue;
     }
 
-    const { buffer, truncated } = await readCapped(response, maxBytes);
+    let read;
+    try {
+      read = await readCapped(response, maxBytes);
+    } catch (cause) {
+      if (cause instanceof ContentTooLargeError) {
+        throw new GmForwardError('response_too_large', cause.message, { status: 413, cause });
+      }
+      throw new GmForwardError('upstream_failed', `讀取 ${current.origin} 的回應時中斷`, { status: 502, cause });
+    }
 
     return {
       status: response.status,
       statusText: response.statusText,
       headers: filterResponseHeaders(response.headers),
-      responseText: buffer.toString('utf8'),
+      responseText: read.buffer.toString('utf8'),
       finalUrl: current.toString(),
-      truncated,
+      truncated: read.truncated,
     };
   }
 

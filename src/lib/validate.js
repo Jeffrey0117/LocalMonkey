@@ -217,11 +217,92 @@ function validateScriptUpdate(input) {
   return result(errors, patch);
 }
 
+/* --------------------------------------------------------------------- *
+ * v2：使用者只給一份 userscript 原文，其他欄位全部從 header 解析出來。
+ * 所以這裡**刻意沒有** name / match / run_at 的驗證 —— 那些不是輸入。
+ * --------------------------------------------------------------------- */
+
+function checkSource(input, errors) {
+  if (typeof input !== 'string' || input.trim().length === 0) {
+    errors.push({ field: 'source', message: 'source 不能是空的' });
+    return null;
+  }
+  if (Buffer.byteLength(input, 'utf8') > MAX_CODE_BYTES) {
+    errors.push({ field: 'source', message: `source 最大 ${MAX_CODE_BYTES} bytes` });
+    return null;
+  }
+  return input;
+}
+
+function checkFallbackName(input, errors) {
+  if (typeof input !== 'string') {
+    errors.push({ field: 'fallbackName', message: 'fallbackName 必須是字串' });
+    return null;
+  }
+  const trimmed = input.trim();
+  return trimmed.length > MAX_NAME_LENGTH ? trimmed.slice(0, MAX_NAME_LENGTH) : trimmed;
+}
+
+function validateUserscriptCreate(input) {
+  if (!isPlainObject(input)) {
+    return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
+  }
+
+  const errors = [];
+  const value = {
+    source: checkSource(input.source, errors),
+    ...('enabled' in input ? { enabled: checkEnabled(input.enabled, errors) } : {}),
+    ...('order_index' in input ? { order_index: checkOrderIndex(input.order_index, errors) } : {}),
+    ...('fallbackName' in input ? { fallbackName: checkFallbackName(input.fallbackName, errors) } : {}),
+  };
+
+  return result(errors, value);
+}
+
+function validateUserscriptUpdate(input) {
+  if (!isPlainObject(input)) {
+    return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
+  }
+
+  const errors = [];
+  rejectImmutableField(input, 'id', errors);
+  rejectImmutableField(input, 'site_id', errors);
+  rejectImmutableField(input, 'metadata', errors);
+
+  const patch = {};
+  if ('source' in input) patch.source = checkSource(input.source, errors);
+  if ('enabled' in input) patch.enabled = checkEnabled(input.enabled, errors);
+  if ('order_index' in input) patch.order_index = checkOrderIndex(input.order_index, errors);
+
+  if (Object.keys(patch).length === 0 && errors.length === 0) {
+    errors.push({ field: 'body', message: '沒有任何要更新的欄位' });
+  }
+
+  return result(errors, patch);
+}
+
+function validateParseRequest(input) {
+  if (!isPlainObject(input)) {
+    return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
+  }
+
+  const errors = [];
+  const value = {
+    source: checkSource(input.source, errors),
+    ...('fallbackName' in input ? { fallbackName: checkFallbackName(input.fallbackName, errors) } : {}),
+  };
+
+  return result(errors, value);
+}
+
 module.exports = {
   validateSiteCreate,
   validateSiteUpdate,
   validateScriptCreate,
   validateScriptUpdate,
+  validateUserscriptCreate,
+  validateUserscriptUpdate,
+  validateParseRequest,
   MAX_CODE_BYTES,
   MAX_NAME_LENGTH,
   RESERVED_SLUGS,

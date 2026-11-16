@@ -45,7 +45,7 @@ function createTokenLogin(adminToken) {
 /**
  * `/admin` 底下的一切：單頁 UI、靜態檔、REST API。全部都要 token。
  */
-function createAdminRouter({ store, config, adminToken, logger }) {
+function createAdminRouter({ store, config, adminToken, logger, fetchImpl }) {
   const router = express.Router();
 
   router.get('/', createTokenLogin(adminToken));
@@ -55,7 +55,7 @@ function createAdminRouter({ store, config, adminToken, logger }) {
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
   });
 
-  router.use('/api', createAdminApiRouter({ store, config, logger }));
+  router.use('/api', createAdminApiRouter({ store, config, logger, fetchImpl }));
 
   router.use(
     express.static(PUBLIC_DIR, {

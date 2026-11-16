@@ -41,7 +41,7 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
   // gm/xhr 要排在 internal 之前 —— internal router 的尾巴是 catch-all 404。
   app.use('/__lm/gm', createGmXhrRouter({ store, config, logger, fetchImpl }));
   app.use('/__lm', createInternalRouter({ store }));
-  app.use('/admin', createAdminRouter({ store, config, adminToken, logger }));
+  app.use('/admin', createAdminRouter({ store, config, adminToken, logger, fetchImpl }));
 
   // 主路由
   app.all('/p/:siteId', handleProxyRoute);

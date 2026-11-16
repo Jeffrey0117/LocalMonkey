@@ -12,6 +12,8 @@ const DEFAULTS = Object.freeze({
   gmXhrMaxRequestBytes: 1024 * 1024,
   gmXhrRateLimit: 60,
   gmXhrRateWindowMs: 60_000,
+  assetTimeoutMs: 15_000,
+  assetMaxBytes: 5 * 1024 * 1024,
 });
 
 function parseInteger(raw, fallback, { min, max }) {
@@ -52,6 +54,16 @@ function loadConfig(env = process.env) {
       { min: 1, max: 1024 * 1024 * 1024 },
     ),
     logLevel: parseToken(env.LOCALMONKEY_LOG_LEVEL) ?? 'info',
+
+    // 存腳本時在伺服器端抓 @require / @resource
+    assetTimeoutMs: parseInteger(env.LOCALMONKEY_ASSET_TIMEOUT_MS, DEFAULTS.assetTimeoutMs, {
+      min: 1,
+      max: 600_000,
+    }),
+    assetMaxBytes: parseInteger(env.LOCALMONKEY_ASSET_MAX_BYTES, DEFAULTS.assetMaxBytes, {
+      min: 1,
+      max: 256 * 1024 * 1024,
+    }),
 
     // GM_xmlhttpRequest 的伺服器端轉發（/__lm/gm/xhr）
     gmXhr: {
