@@ -30,24 +30,37 @@ window.LocalMonkeyApi = (function createApi() {
     if (!response.ok) {
       const error = new Error(describeError(response.status, payload));
       error.status = response.status;
+      error.payload = payload;
       throw error;
     }
 
     return payload;
   }
 
-  return {
-    listSites: () => request('GET', '/sites').then((data) => data.sites),
-    createSite: (input) => request('POST', '/sites', input).then((data) => data.site),
-    updateSite: (id, patch) => request('PUT', `/sites/${encodeURIComponent(id)}`, patch),
-    deleteSite: (id) => request('DELETE', `/sites/${encodeURIComponent(id)}`),
+  const id = (value) => encodeURIComponent(value);
 
-    listScripts: (siteId) =>
-      request('GET', `/sites/${encodeURIComponent(siteId)}/scripts`).then((data) => data.scripts),
-    createScript: (siteId, input) =>
-      request('POST', `/sites/${encodeURIComponent(siteId)}/scripts`, input),
-    updateScript: (scriptId, patch) =>
-      request('PUT', `/scripts/${encodeURIComponent(scriptId)}`, patch),
-    deleteScript: (scriptId) => request('DELETE', `/scripts/${encodeURIComponent(scriptId)}`),
+  return {
+    /* ---------------- v2：腳本優先 ---------------- */
+
+    /** 只解析不寫入（資訊列與「丟腳本」預覽都用這支，前後端共用同一個解析器） */
+    parse: (source, fallbackName) =>
+      request('POST', '/userscript/parse', fallbackName ? { source, fallbackName } : { source })
+        .then((data) => data.parsed),
+
+    listScripts: () => request('GET', '/scripts').then((data) => data.scripts),
+    getScript: (scriptId) => request('GET', `/scripts/${id(scriptId)}`).then((data) => data.script),
+
+    /** @returns {Promise<{script: object, targets: object[], warnings: string[]}>} */
+    deployScript: (source, fallbackName) =>
+      request('POST', '/scripts', fallbackName ? { source, fallbackName } : { source }),
+
+    saveScript: (scriptId, patch) => request('PUT', `/scripts/${id(scriptId)}`, patch),
+    deleteScript: (scriptId) => request('DELETE', `/scripts/${id(scriptId)}`),
+
+    /* ---------------- 網站（唯讀清單 + 啟用開關 / 指定主機） ---------------- */
+
+    listSites: () => request('GET', '/sites').then((data) => data.sites),
+    updateSite: (siteId, patch) => request('PATCH', `/sites/${id(siteId)}`, patch).then((data) => data.site),
+    deleteSite: (siteId) => request('DELETE', `/sites/${id(siteId)}`),
   };
 })();
