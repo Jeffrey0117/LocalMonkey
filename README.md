@@ -238,7 +238,7 @@ tests/
 | `LOCALMONKEY_MAX_BODY_BYTES` | `26214400` | 代理請求 body 上限 |
 | `LOCALMONKEY_LOG_LEVEL` | `info` | `silent`/`error`/`warn`/`info`/`debug` |
 
-完整說明見 [`.env.example`](.env.example)。注意 LocalMonkey **不讀 `.env` 檔**（零依賴，沒裝 dotenv）—— 那份檔案是給你抄環境變數用的。
+完整說明見 [`.env.example`](.env.example)。把它複製成 `.env` 就會生效（`npm start` 走 Node 內建的 `--env-file-if-exists`，不需要 dotenv，零依賴沒被打破）。真實環境變數優先於 `.env` 裡的值。
 
 ---
 

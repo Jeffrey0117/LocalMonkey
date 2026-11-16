@@ -48,20 +48,32 @@ test('⛔ 根路徑 fallback 也不能被 // 劫持', async (t) => {
 });
 
 test('⛔ 不放行私網時，也不能用 // 繞過 SSRF 檢查打內網', async (t) => {
-  // 這個網站指向公開網域（過得了 SSRF 檢查），攻擊者再用 // 把真正的目標換成內網位址
-  const app = await startApp({ config: { allowPrivate: false } });
+  // 這個網站指向公開網域（過得了 SSRF 檢查），攻擊者再用 // 把真正的目標換成內網位址。
+  //
+  // 刻意注入假的 fetch 而不是真的打 example.com：① 測試不該依賴外網（會變 flaky）
+  // ② 更重要的是斷言強度 —— 直接斷言「上游 URL 的 host 是什麼」才真的證明主機被釘死。
+  // 用狀態碼反推不行：修正被還原、請求真的跑去連 192.168.1.1 時連不通會回 502，
+  // 那種「notEqual(200)」的斷言照樣會綠，等於沒測到。
+  const attempted = [];
+  const recordingFetch = async (url) => {
+    attempted.push(String(url));
+    return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+  };
+
+  const app = await startApp({ config: { allowPrivate: false }, fetchImpl: recordingFetch });
   t.after(() => app.close());
   seedSite(app.store, { targetOrigin: 'https://example.com' });
 
-  const response = await rawRequest({ port: app.port, path: '/p/demo//192.168.1.1/admin' });
+  await rawRequest({ port: app.port, path: '/p/demo//192.168.1.1/admin' });
 
-  // 只要主機沒被換掉，這個請求就是打 example.com 的 //192.168.1.1/admin（404 之類），
-  // 絕對不會是「連得上 192.168.1.1」。
-  assert.notEqual(response.status, 200);
+  assert.equal(attempted.length, 1, '應該只發出一個上游請求');
+  const upstreamUrl = new URL(attempted[0]);
+  assert.equal(upstreamUrl.host, 'example.com', 'host 必須還是站台設定的那個，不能被路徑偷換');
+  assert.equal(upstreamUrl.protocol, 'https:');
   assert.equal(
-    response.text.includes('上游網站沒有回應') && response.text.includes('192.168.1.1'),
-    false,
-    '錯誤頁不該顯示它真的去連了內網位址',
+    attempted[0].startsWith('https://example.com/'),
+    true,
+    `上游 URL 必須仍指向 example.com，實際是 ${attempted[0]}`,
   );
 });
 

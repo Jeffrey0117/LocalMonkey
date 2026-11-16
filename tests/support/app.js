@@ -25,6 +25,7 @@ async function startApp(options = {}) {
     config,
     adminToken: options.adminToken ?? TEST_ADMIN_TOKEN,
     logger: options.logger ?? silentLogger,
+    fetchImpl: options.fetchImpl,
   });
 
   const server = await new Promise((resolve, reject) => {
