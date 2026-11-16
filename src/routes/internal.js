@@ -3,6 +3,7 @@
 const express = require('express');
 
 const { wrapUserCode } = require('../lib/user-script.js');
+const { buildShimConfig, renderShim } = require('../lib/gm-shim.js');
 
 /**
  * `/__lm/*`：LocalMonkey 自己的端點（腳本、GM shim、@require 資產）。
@@ -55,7 +56,38 @@ function createInternalRouter({ store }) {
     res.setHeader('content-type', 'application/javascript; charset=utf-8');
     res.setHeader('cache-control', 'no-cache'); // 改完要立刻生效
     res.setHeader('x-content-type-options', 'nosniff');
-    res.send(wrapUserCode(script.name, script.source, { runAt: script.run_at }));
+    res.send(
+      wrapUserCode(script.name, script.source, {
+        runAt: script.run_at,
+        scriptId: script.id,
+        grants: script.metadata?.grants,
+      }),
+    );
+  });
+
+  /**
+   * GM shim。只有「有 @grant 且不是 none」的腳本才有（needsShim），
+   * 其他一律 404 —— 不要給沒要求的腳本任何 GM_* 能力。
+   */
+  router.get('/shim/:scriptFile', (req, res) => {
+    const { scriptFile } = req.params;
+    if (!scriptFile.endsWith('.js')) {
+      sendNotFound(res, 'shim 不存在');
+      return;
+    }
+
+    const script = store.userscripts.get(scriptFile.slice(0, -'.js'.length));
+    if (!script || !script.enabled || !script.metadata?.needsShim) {
+      sendNotFound(res, 'shim 不存在（這支腳本沒有宣告 @grant）');
+      return;
+    }
+
+    const config = buildShimConfig(script, { loadAsset: (sha256) => store.assets.get(sha256) });
+
+    res.setHeader('content-type', 'application/javascript; charset=utf-8');
+    res.setHeader('cache-control', 'no-cache'); // @grant 改了要立刻生效
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.send(renderShim(config));
   });
 
   router.get('/asset/:assetFile', (req, res) => {

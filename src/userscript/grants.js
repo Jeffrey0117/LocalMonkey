@@ -52,4 +52,38 @@ function isSupportedGrant(grant) {
   return CANONICAL_BY_LOWER.has(canonicalGrant(grant).toLowerCase());
 }
 
-module.exports = { SUPPORTED_GRANTS, canonicalGrant, isSupportedGrant };
+/**
+ * `@grant` 的值是使用者可以隨便打的字串，而注入的 wrapper 會把它當成**變數名稱**
+ * 寫進送給瀏覽器的 JS。所以在那之前一定要過這道濾網，否則
+ * `@grant x; window.PWNED = 1` 就會變成真的程式碼。
+ */
+const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+function isValidGrantName(grant) {
+  if (typeof grant !== 'string') return false;
+  if (grant.startsWith('GM.')) return IDENTIFIER_PATTERN.test(grant.slice(3));
+  return IDENTIFIER_PATTERN.test(grant);
+}
+
+/**
+ * 要在使用者腳本的 scope 裡宣告哪些名字。
+ * GM4 的點號形式（`GM.setValue`）全部收斂成一個 `GM` 物件，跟 Tampermonkey 一樣。
+ * @param {readonly string[]} grants
+ * @returns {string[]}
+ */
+function aliasNamesFor(grants) {
+  const names = (Array.isArray(grants) ? grants : [])
+    .filter((grant) => isValidGrantName(grant))
+    .map((grant) => (grant.startsWith('GM.') ? 'GM' : grant));
+
+  return [...new Set(names)];
+}
+
+module.exports = {
+  SUPPORTED_GRANTS,
+  canonicalGrant,
+  isSupportedGrant,
+  isValidGrantName,
+  aliasNamesFor,
+  IDENTIFIER_PATTERN,
+};
