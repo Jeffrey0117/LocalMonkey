@@ -150,7 +150,11 @@ function resolveTargets(raw, notices) {
 
   if (targets.length > 0 && targets.every((target) => target.proxyable === 'rejected')) {
     notices.push(
-      notice('error', '所有 @match / @include 都無法轉成代理網站，請改寫成具體主機（見每一列的原因）'),
+      notice(
+        'warn',
+        '所有 @match / @include 都無法轉成代理網站（原因見每一列）。' +
+          '這支腳本仍然可以用投遞模式：用「安裝網址」讓 Tampermonkey 裝起來就正常運作。',
+      ),
     );
   }
 

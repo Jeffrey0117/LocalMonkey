@@ -38,7 +38,7 @@ window.LocalMonkeyDropScript = (function createDropScript() {
     byId('drop-status').textContent =
       usable > 0
         ? `偵測到 ${usable} 個可以代理的網域（${parsed.name}）`
-        : '沒有可以代理的網域 —— 部署後這支腳本會存起來但不會掛在任何網站上';
+        : '沒有可以代理的網域。部署後腳本會存起來，用「安裝網址」讓 Tampermonkey 裝起來就能用（投遞模式）。';
   }
 
   const reparse = debounce(async (source) => {

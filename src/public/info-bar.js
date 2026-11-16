@@ -33,7 +33,8 @@ window.LocalMonkeyInfoBar = (function createInfoBar() {
     return looksLoopback(host) && !isCovered(host);
   }
 
-  const STATUS_LABEL = { ready: '可代理', 'needs-host': '要指定主機', rejected: '不能用' };
+  // 只描述代理模式 —— 投遞模式對任何腳本都成立，所以沒有「不支援」這種狀態
+  const STATUS_LABEL = { ready: '可代理', 'needs-host': '要指定主機', rejected: '不能代理' };
   const STATUS_CLASS = { ready: 'ok', 'needs-host': 'warn', rejected: 'bad' };
 
   function badge(status) {

@@ -238,12 +238,16 @@ test('完全重複的 @match 去重', () => {
   assert.equal(parsed.targets.length, 1);
 });
 
-test('全部 target 都被拒 → 留下一則 error 提示', () => {
+test('全部 target 都被拒 → 提示要說「代理不行但投遞可以」，而不是「不支援」', () => {
   const parsed = parseUserscript(script(['// @match <all_urls>']));
 
   assert.equal(parsed.targets.length, 1);
   assert.equal(parsed.targets[0].proxyable, 'rejected');
-  assert.ok(parsed.notices.some((notice) => notice.level === 'error'));
+  assert.equal(parsed.targets[0].deliverable, true);
+
+  const notice = parsed.notices.find((entry) => /投遞模式/.test(entry.message));
+  assert.ok(notice, `提示要指出投遞模式這條路：${JSON.stringify(parsed.notices)}`);
+  assert.equal(notice.level, 'warn', '代理配不起來不是錯誤 —— 這支腳本照樣能用');
 });
 
 test('@exclude 與 @exclude_match 都收，解析失敗的不會變成排除全部', () => {

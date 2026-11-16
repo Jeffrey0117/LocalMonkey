@@ -46,6 +46,44 @@ http://你的機器:30600/p/ptt/        ← 打開這個網址就是改造後的
 
 ---
 
+## 兩種模式（每支腳本各自選）
+
+同一份腳本，LocalMonkey 可以用兩種方式送出去：
+
+| | **代理模式** | **投遞模式** |
+|---|---|---|
+| 怎麼跑 | 打代理網址 `/p/<站>/`，由伺服器把腳本注入 HTML | Tampermonkey 從 `/s/<token>/…user.js` 裝起來，跑在原站 |
+| 需要擴充功能 | **不用** —— 手機、平板、別人的電腦都行 | 要裝 Tampermonkey |
+| `GM_*` | 靠 LocalMonkey 的 shim（支援清單見下） | 原生，全部支援 |
+| 要登入的站 / 複雜 SPA | 多半會壞（代理擋不住它們的 origin 檢查） | 正常 |
+| `@match *://*/*` | 做不到（反向代理必須指向具體主機） | 可以 |
+| 改一次全生效 | 下次載入頁面就是新版 | 各裝置的 Tampermonkey 自動更新 |
+
+**所以「這支腳本不能代理」不等於「不能用」。** 控制台會分開告訴你這兩件事：
+某個 `@match` 配不出具體主機時，它會說「不能用代理模式（原因…），但可以用投遞模式」。
+
+### 投遞模式：讓 Tampermonkey 自動更新
+
+每支腳本都有一組安裝網址（控制台的「安裝」那一列可以複製／直接開）：
+
+```
+http://你的機器:30600/s/<32 bytes 的隨機 token>/my-script.user.js
+```
+
+- 在任何裝置上開這個網址，Tampermonkey 會跳出安裝畫面
+- 之後你在控制台改腳本、存檔，**各裝置就會自己更新**
+- 這個端點**免認證**（Tampermonkey 抓腳本時帶不了 token），憑證就是路徑裡那組猜不到的
+  token。要撤銷就按「重新產生網址」（已安裝的裝置要重裝）
+- 投遞出去的那一份會把 `@updateURL` / `@downloadURL` 改寫成這個網址，所以更新檢查
+  會回到 LocalMonkey —— 腳本原本寫的更新來源不會被沿用
+
+> ⛔ **Tampermonkey 只有在遠端 `@version` 比本地高時才更新。** 你改完存檔但沒動版本號
+> 的話，所有裝置都會停在舊版 —— 看起來就像功能壞了。所以存檔後控制台會明確告訴你
+> 「版本號沒變，Tampermonkey 不會更新到這一版」，旁邊給你一顆**版本 +1 並儲存**。
+> 沒有 `@version` 的腳本也會被提醒：那種腳本永遠不會自動更新。
+
+---
+
 ## 刻意不做的事
 
 這個專案的價值在於**簡單到不行卻很實用**。以下功能屬於姊妹專案 LocalDevTool，不會加進來：
@@ -87,11 +125,12 @@ http://127.0.0.1:30600/admin?token=<你的 token>
 
 ### 從 v1 升級
 
-直接 `git pull` + `npm start` 就好，schema migration 會自己跑（`PRAGMA user_version` 1 → 2）：
+直接 `git pull` + `npm start` 就好，schema migration 會自己跑（`PRAGMA user_version` 1 → 3）：
 
 - v1 的腳本程式碼搬進 `scripts.source`，`match_glob` 變成 `script_sites` 的綁定
 - `run_at` 的 `head-end` → `document-start`、`body-end` → `document-end`
 - 網站與啟用狀態原樣保留
+- 每支腳本會被補上一組投遞 token（安裝網址），既有的 token 不會被換掉
 
 v1 的腳本沒有 userscript header，所以 metadata 是空的（會標成 `legacy`）——
 在控制台裡幫它補上 `// ==UserScript==` 區塊並存檔，就會變成完整的 v2 腳本。
@@ -160,6 +199,7 @@ flowchart TD
     R -->|"/__lm/script, /__lm/shim, /__lm/asset"| S["投遞<br/>腳本 / GM shim / @require 資產"]
     R -->|"/__lm/gm/xhr"| X["GM_xmlhttpRequest 轉發<br/>來源 + @connect + SSRF + 速率"]
     R -->|"/p/:siteId/*"| P["主代理"]
+    R -->|"/s/:token/:file"| V["投遞給 Tampermonkey<br/>改寫 @updateURL、ETag / 304"]
     R -->|"其他根路徑"| F["根路徑 fallback<br/>cookie → Referer → 404"]
 
     F --> P
@@ -173,6 +213,7 @@ flowchart TD
     A -.->|讀寫| DB
     S -.->|讀| DB
     X -.->|"讀：@connect / 綁定"| DB
+    V -.->|"讀：用 token 查腳本"| DB
     T -.->|"讀：哪些腳本要注入"| DB
 ```
 
@@ -180,7 +221,7 @@ flowchart TD
 
 | 階段 | 做了什麼 |
 |---|---|
-| 路由 | `/admin`、`/admin/api/*`、`/__lm/*` 是保留路徑，不進代理。site slug 也不准叫這些名字 |
+| 路由 | `/admin`、`/admin/api/*`、`/__lm/*`、`/s/*` 是保留路徑，不進代理。site slug 也不准叫這些名字 |
 | siteId | 主路由從 `/p/:siteId/` 拿；fallback 依序試 cookie `lm_site` → `Referer` 裡的 `/p/<id>/` → 都沒有就 404（**不是 502**，502 會讓人以為代理壞了） |
 | SSRF | 解析 `target_origin` 的 DNS，命中 loopback / 私網 / link-local / `metadata.google.internal` 就 403 |
 | 請求 | 原樣轉送 method、body、cookie、UA、accept\*；移除 hop-by-hop 與 `host`、`content-length`、`accept-encoding` |
@@ -217,6 +258,7 @@ src/
     site-slug.js        主機名 → 代理網址用的 slug
     fetch-asset.js      抓 @require（SSRF + 大小上限）
     gm-forward.js       ★ GM_xmlhttpRequest 的實際轉發
+    delivery.js         ★ 投遞模式：token、header 改寫、版本號
   lib/
     glob.js             path_glob 比對（* ** ?）
     injection.js        ★ 這一頁要注入什麼、插在哪裡
@@ -225,6 +267,7 @@ src/
     gm-shim.js          ★ shim 的伺服器端（組 config + render）
     connect-policy.js   ★ @connect 白名單判斷
     rate-limit.js       ★ 滑動視窗速率限制
+    gm-allow-hosts.js   ★ GM_xmlhttpRequest 的本機目標白名單
     read-capped.js      ★ 有上限地讀 fetch 回應
     validate.js         零依賴輸入驗證
     ssrf.js             origin → DNS → 內網判斷
@@ -244,6 +287,7 @@ src/
     admin-api.js        /admin/api/* REST（v2 + v1 相容）
     internal.js         /__lm/script|shim|asset
     gm-xhr.js           ★ POST /__lm/gm/xhr（七道防護）
+    delivery.js         ★ GET /s/<token>/<slug>.user.js
   middleware/
     admin-auth.js       token 驗證 + 跨站寫入阻擋
   views/pages.js        錯誤頁（給人看的，不吐堆疊）
@@ -278,8 +322,10 @@ tests/
 | GET | `/admin/api/scripts` | 列表（不含 `source`，帶 `site_ids`） |
 | POST | `/admin/api/scripts` | `{ source }` → 解析 + 自動建站 + 綁定 → `{ script, targets, warnings }` |
 | GET | `/admin/api/scripts/:id` | 單支（含 `source`、`metadata`、`sites`） |
-| PUT | `/admin/api/scripts/:id` | 帶 `source` → 重新解析並重算綁定；只帶 `enabled` / `order_index` → 單純更新 |
+| PUT | `/admin/api/scripts/:id` | 帶 `source` → 重新解析並重算綁定；只帶 `enabled` / `order_index` → 單純更新。帶 `bumpVersion: true` 會先把 `@version` 最後一段 +1。回應帶 `versionBumped` |
 | DELETE | `/admin/api/scripts/:id` | 刪除 |
+| POST | `/admin/api/scripts/:id/delivery-token/rotate` | 重新產生安裝網址（撤銷舊的） |
+| GET | `/admin/api/settings` | 控制台要用的伺服器設定（GM 白名單、allowPrivate） |
 
 `targets` 是「偵測到的網域表」，每一列有 `status`（`ready` / `needs-host` / `rejected`）、
 `host`、`targetOrigin`、`pathGlob`、`siteId` 與 `reason`。
@@ -362,6 +408,17 @@ v1 的 `run_at` 兩個值（`head-end` / `body-end`）仍然合法，注入位�
 | `document-end`（預設） | `</body>` 之前 |
 | `document-idle` | `</body>` 之前，外面包 `DOMContentLoaded` + `requestIdleCallback` |
 
+### `@noframes` → 只在最上層頁面跑
+
+宣告了就不會在 iframe 裡執行。判斷在瀏覽器端做（伺服器不知道這份 HTML 會不會被塞進
+frame）：讀 `window.top` 丟錯當成在跨來源 frame 裡、不跑；完全讀不到 `window.top`
+的環境當成最上層、照跑。
+
+### `@updateURL` / `@downloadURL`
+
+解析進 metadata 並顯示在控制台。投遞模式會**在送出去的那一份裡**把它們換成
+LocalMonkey 的安裝網址（資料庫裡的 source 不動）。
+
 ### `@grant` → GM API
 
 只有宣告過的 API 會出現在腳本的 scope 裡（跟 Tampermonkey 一致）。
@@ -379,9 +436,10 @@ v1 的 `run_at` 兩個值（`head-end` / `body-end`）仍然合法，注入位�
 | `GM_notification` | `Notification` API，沒權限就退回頁面內 toast |
 | `GM_info` | 從 metadata 合成 |
 | `GM_getResourceText` / `GM_getResourceURL` | 走伺服器端的 `assets` 快取 |
+| `GM_download` | 先把檔案抓成 blob 再用 `<a download>` 存。**遠端網址不會直接丟給 `<a>`** —— 跨來源時瀏覽器會忽略 download 改成導航，等於把你正在看的頁面弄掉 |
 | `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | 走伺服器端轉發（見下） |
 
-**沒實作的（`GM_download`、`GM_cookie`…）不會靜默失敗**：呼叫時會 `console.error`
+**沒實作的（`GM_cookie`、`GM_setValues`…）不會靜默失敗**：呼叫時會 `console.error`
 說明，後台該腳本的權限列也會標紅字。shim 自己的任何錯誤都只進 `console.warn` ——
 它絕不能弄壞被代理的原站。
 
@@ -516,7 +574,10 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 14. **從 v1 升級上來的腳本 metadata 是空的。** migration 保住了程式碼與綁定，
     但沒有重新解析（migration 不該依賴會演化的解析器）。那些腳本在控制台裡存一次檔就會補上。
 15. **`@connect` 只比對主機，不比對路徑或 port。** 跟 Tampermonkey 一樣的粒度。
-16. **沒有「只在 iframe 外執行」。** `@noframes` 解析得出來、存得起來，但注入時還沒用它。
+16. **投遞模式沒有伺服器推送更新。** 靠 Tampermonkey 自己的週期性檢查（也可以在它的
+    管理頁按「檢查更新」）。也沒有腳本市集、沒有簽章。
+17. **安裝網址的 token 就是憑證。** 那個端點免認證（Tampermonkey 帶不了 header），
+    所以網址洩漏＝腳本內容洩漏。按「重新產生網址」可以撤銷，但已安裝的裝置要重裝。
 
 ---
 
@@ -534,11 +595,11 @@ GM shim 則是放進自己寫的假 DOM（`tests/support/dom.js`）**真的執�
 最近一次執行：
 
 ```
-ℹ tests 561
-ℹ pass 561
+ℹ tests 673
+ℹ pass 673
 ℹ fail 0
 
-ℹ all files         |  97.34 |    89.95 |   97.95 |
+ℹ all files         |  97.53 |    90.44 |   97.93 |
 ```
 
 （line % / branch % / funcs %）

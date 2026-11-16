@@ -295,3 +295,81 @@ test('run_at 的 CHECK 收 document-* 三值，也收 v1 的兩個相容值，�
   }
   assert.throws(() => insert.run('scr_bad', 'nonsense'), /CHECK/i);
 });
+
+/* ------------------------- v3：投遞 token（SPEC-console §8） ------------------------- */
+
+test('v3：scripts 多了 delivery_token，而且有 UNIQUE 索引', (t) => {
+  const db = openDatabase(':memory:');
+  t.after(() => db.close());
+
+  const columns = db
+    .prepare('SELECT name FROM pragma_table_info(?)')
+    .all('scripts')
+    .map((row) => row.name);
+  assert.ok(columns.includes('delivery_token'));
+
+  const indexes = db
+    .prepare("SELECT name, \"unique\" FROM pragma_index_list(?)")
+    .all('scripts');
+  const tokenIndex = indexes.find((index) => index.name === 'idx_scripts_delivery_token');
+
+  assert.ok(tokenIndex, `少了 token 的索引：${indexes.map((i) => i.name).join(', ')}`);
+  assert.equal(tokenIndex.unique, 1, 'token 必須唯一（它是那個端點的憑證）');
+});
+
+test('⭐ v1 的資料庫一次升到 v3：資料完整，而且每支腳本都被補上 token', (t) => {
+  const db = v1Database(t);
+  seedV1(db);
+
+  migrate(db);
+
+  assert.equal(db.pragma('user_version', { simple: true }), SCHEMA_VERSION);
+
+  const rows = db.prepare('SELECT id, name, source, delivery_token FROM scripts ORDER BY id').all();
+  assert.equal(rows.length, 2);
+
+  for (const row of rows) {
+    assert.match(row.delivery_token, /^[0-9a-f]{64}$/, `${row.id} 沒有 token`);
+  }
+
+  assert.equal(
+    new Set(rows.map((row) => row.delivery_token)).size,
+    rows.length,
+    '每支腳本的 token 要不一樣',
+  );
+
+  // 內容還是 v1 的那份
+  const first = rows.find((row) => row.id === 'scr_aaaaaaaaaaaaaaaa');
+  assert.equal(first.name, '去廣告');
+  assert.equal(first.source, "document.querySelector('.ad')?.remove();");
+});
+
+test('⭐ 已經在 v2 的資料庫（開發機的實際狀態）升到 v3 也會補 token', (t) => {
+  const db = v1Database(t);
+  seedV1(db);
+
+  // 先停在 v2
+  MIGRATIONS[1].up(db);
+  db.pragma('user_version = 2');
+
+  const beforeTokens = db.prepare('SELECT COUNT(*) AS n FROM pragma_table_info(?)').get('scripts');
+  assert.ok(beforeTokens.n > 0);
+
+  migrate(db);
+
+  const rows = db.prepare('SELECT id, delivery_token FROM scripts').all();
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((row) => /^[0-9a-f]{64}$/.test(row.delivery_token)));
+});
+
+test('v3 之後重複跑 migrate 不會換掉既有的 token（已安裝的裝置還要靠它更新）', (t) => {
+  const db = v1Database(t);
+  seedV1(db);
+  migrate(db);
+
+  const before = db.prepare('SELECT id, delivery_token FROM scripts ORDER BY id').all();
+  migrate(db);
+  const after = db.prepare('SELECT id, delivery_token FROM scripts ORDER BY id').all();
+
+  assert.deepEqual(after, before);
+});

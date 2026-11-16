@@ -18,6 +18,19 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯讀、跟著打字即時重新解析。
 任何想「讓使用者再手填一次」的改動都是在製造第二個真相來源，先回去讀 SPEC-console §0。
 
+### 兩種模式，同一份 source
+
+| | 代理模式 | 投遞模式（SPEC-console §8） |
+|---|---|---|
+| 路徑 | `/p/<site>/…` + 注入 HTML | `GET /s/<token>/<slug>.user.js` |
+| 跑在哪 | 我們改寫過的 HTML 裡 | 使用者的 Tampermonkey 裡 |
+| GM API | 我們的 shim | 原生，全支援 |
+| 要登入的站 / 配全世界的 pattern | 做不到 | 可以 |
+
+所以每個 target 有**兩個獨立的軸**：`proxyable`（ready / needs-host / rejected）與
+`deliverable`（永遠 true）。**不要再用「不支援」描述 rejected** —— 那只代表
+「代理模式配不起來」，同一支腳本投遞出去完全正常（revid-subs 就是這種）。
+
 ---
 
 ## 怎麼跑
@@ -25,7 +38,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，561 個測試
+npm test             # node:test，673 個測試
 npm run test:coverage
 ```
 
@@ -97,13 +110,25 @@ proxy/respond.js
 
 每支腳本的投遞順序固定是 **GM shim → `@require` 資產 → 腳本本身**。
 
+### 投遞一份 .user.js 怎麼走
+
+```
+GET /s/<token>/<slug>.user.js      ← Tampermonkey（匿名，它帶不了 admin token）
+  → userscripts.getByDeliveryToken  token 不是 64 hex 就不查 DB
+  → services/delivery.js
+      ├─ buildDeliveryUrl          用「這個請求的 Host」組絕對網址
+      └─ rewriteHeaderUrls         換掉 @updateURL / @downloadURL（只動送出去的那份）
+  → ETag（投遞內容的 sha256）+ Last-Modified；If-None-Match 命中就回 304
+```
+
 ---
 
 ## 資料模型（v2）
 
 ```
 sites          id(slug) / name / target_origin / enabled / auto_created / from_pattern
-scripts        id / name / version / description / source / metadata(JSON) / run_at / enabled / order_index
+scripts        id / name / version / description / source / metadata(JSON) / run_at
+               enabled / order_index / delivery_token
 script_sites   (script_id, site_id, path_glob) PK / exclude_glob(JSON 陣列)
 assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_at
 ```
@@ -115,6 +140,9 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
   `store.userscripts` 才是 v2 的 API。兩者背後同一組表。新功能一律用後者。
 - `assets` 是純內容儲存；「哪支腳本要載哪些資產」記在該腳本的 `metadata.requireAssets`
   / `resourceAssets`（含 `sha256`，抓失敗時是 `null` + `error`）。
+- **`delivery_token`（v3）是投遞端點的憑證**，UNIQUE，建立時產生、可以輪替（＝撤銷舊網址）。
+  migration 會幫既有資料回填，而且**重複跑 migrate 不會換掉既有的 token** ——
+  已經安裝好的裝置還要靠它更新。
 
 ---
 
@@ -162,6 +190,17 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
   要升級就照檔頭註解的順序重新串一次。
 - **刪站只刪「因此變成沒有任何綁定」的腳本。** v1 的語意是「刪站連帶刪腳本」，
   但 v2 的腳本可以暫時誰都不掛（`@match` 還沒寫好），那種不該被無關的刪站牽連。
+- **`GM_download` 的 `<a download>` 只准配 blob: / data: 的 href。** 遠端網址要先
+  fetch 成 blob —— 跨來源時瀏覽器會忽略 download 屬性改成「導航」，等於把使用者
+  正在看的頁面弄掉。抓不到就 onerror + warn，**絕不點那個連結**。
+- **`LOCALMONKEY_GM_ALLOW_HOSTS` 不是 `LOCALMONKEY_ALLOW_PRIVATE` 的替代品。**
+  前者只影響 `/__lm/gm/xhr`、精確比對 `host:port`、預設空的；後者是代理目標的全域開關。
+  命中白名單只豁免「私網位址」那條，`@connect` 還是要過（兩道都要過）。
+- **投遞的絕對網址用請求的 `Host` 組，不從設定讀。** 使用者會從 `127.0.0.1`、區網 IP、
+  tunnel 網域來裝，每種都要給對應的網址。（踩過的坑：後端自己組對外網址，在代理後面
+  會組出內部位址。）`Host` 是請求端可控的，所以有限字集。
+- **版本號不要幫使用者偷偷改。** 存檔只回報 `versionBumped`，由 UI 問他要不要「版本 +1」；
+  真的要改的時候是**伺服器端**改 source 再存（這樣畫面上的 source 跟實際投遞的永遠同一份）。
 
 ---
 
@@ -219,7 +258,23 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
     `tests/integration/admin-console-page.test.js` 用 `vm.Script` 檢查每支前端 JS，
     並且逐一請求 `index.html` 引用的每個 `/admin/` 資源。加新的前端檔案時不用改測試
     （它掃目錄），但**新增 `<script src>` 一定要跑一次測試**。
-19. **`@noframes` 解析得出來、存得起來，但注入時還沒用它。** 別以為它生效了。
+19. **在區塊註解裡寫出「星號加斜線」的 pattern 字面值會把註解提前關掉。**
+    `src/userscript/match.js` 的檔頭註解就這樣炸過一次（整個檔案語法錯誤，
+    而且錯誤訊息只說 `Unexpected token '*'`）。要舉那個例子就用文字描述。
+20. **`node -e "…"` 經 bash 傳的字串裡不要出現 `<token>` 這種角括號。**
+    bash 會把它當成重導向（`token: No such file or directory`），整個腳本是壞的
+    但表面上只會看到一行怪錯誤。要寫這種內容就寫成 `.js` 檔再跑。
+21. **複製 SQLite 檔做升級驗證時，`-wal` 與 `-shm` 要一起複製。**
+    WAL 模式下最近的 commit 還在 `-wal` 裡，只複製 `.db` 會得到一個
+    `user_version = 0`、連表都沒有的檔案 —— 看起來像資料不見了，其實是沒複製完。
+22. **`@connect` 不帶 port，而 GM 白名單一定帶 port。** 所以 UI 的「會不會被擋」
+    只能比對 hostname（白名單裡有沒有哪一筆的 hostname 等於這個宣告）。
+    那是**提示**，真正的授權判斷在伺服器端（`isAllowedHost` 精確比對 `url.host`）。
+23. **改了「什麼算未支援的 GM API」就要改測試的樣本。** 實作 `GM_download` 之後，
+    四條以它當「未支援」樣本的測試會紅。測試要挑真的沒實作的（`GM_cookie`）。
+24. **用 `&&` 串 `npm test` 與 `git commit` 不會擋住失敗的 commit**，因為中間那段
+    `grep` 有找到東西就回 0。我用這招推過一次紅的（`de64785`）。要擋就看 `npm test`
+    自己的 exit code，別讓 grep 吃掉它。
 
 ---
 
@@ -234,6 +289,10 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
   模擬「注入時 DB 炸掉」，而注入入口從 `scripts.listActiveForSite` 換成了
   `userscripts.listForInjection`。不改的話那條會對著不存在的接縫做斷言，變成永遠綠的假測試）。
   改 v1 的相容層時請維持這個紀律：**v1 的 API 形狀是契約，不是實作細節**。
+- **真實腳本的 header 存在 `tests/fixtures/real-userscripts/`**（使用者實際要用的 7 支）。
+  改解析器、改 GM 支援清單、改投遞邏輯之後都要跑 `tests/unit/real-userscripts.test.js`
+  與 `tests/integration/delivery.test.js` —— 那些比自己編的測資有價值，而且已經抓到過
+  「規格把 `GM_download` 列成不支援」這種錯。fixture 原樣保留 CRLF 與中文，不要「整理」它。
 - **GM shim（`src/public/gm-shim.js`）是真的會跑在別人網站上的程式。**
   每個 API 都要「自己的錯誤吞掉 + `console.warn`」。測試請加進
   `tests/unit/gm-shim.test.js`，用 `tests/support/dom.js` 的假 DOM 真的執行它 ——
