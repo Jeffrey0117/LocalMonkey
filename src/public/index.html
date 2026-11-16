@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>LocalMonkey 後台</title>
+    <link rel="stylesheet" href="/admin/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>LocalMonkey</h1>
+      <p>代理網站 + 注入自己的 JS。改一次，所有裝置下次載入就是新版。</p>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <main>
+      <section class="panel">
+        <div class="panel-head">
+          <h2>網站</h2>
+          <button id="site-new-toggle" type="button" class="ghost">+ 新增網站</button>
+        </div>
+
+        <form id="site-new" class="form grid" hidden>
+          <label>
+            id（網址用的 slug）
+            <input name="id" placeholder="example" pattern="[a-z0-9-]{1,40}" required />
+          </label>
+          <label>
+            名稱
+            <input name="name" placeholder="Example 官網" required />
+          </label>
+          <label class="wide">
+            target_origin
+            <input name="target_origin" placeholder="https://www.example.com" required />
+          </label>
+          <div class="actions wide">
+            <button type="submit">建立</button>
+            <button type="reset" class="ghost">清空</button>
+          </div>
+        </form>
+
+        <ul id="site-list" class="list"></ul>
+      </section>
+
+      <section class="panel" id="scripts-panel" hidden>
+        <div class="panel-head">
+          <h2>腳本：<span id="scripts-site-name"></span></h2>
+          <button id="script-new-toggle" type="button" class="ghost">+ 新增腳本</button>
+        </div>
+
+        <form id="script-new" class="form grid" hidden>
+          <label>
+            名稱
+            <input name="name" placeholder="把標題換掉" required />
+          </label>
+          <label>
+            執行時機
+            <select name="run_at">
+              <option value="body-end">body-end（頁面結尾，預設）</option>
+              <option value="head-end">head-end（head 結尾，比較早）</option>
+            </select>
+          </label>
+          <label>
+            match_glob
+            <input name="match_glob" value="*" required />
+          </label>
+          <label>
+            順序
+            <input name="order_index" type="number" value="0" step="1" required />
+          </label>
+          <label class="wide">
+            程式碼
+            <textarea name="code" rows="8" placeholder="document.querySelector('h1').textContent = 'LocalMonkey';" required></textarea>
+          </label>
+          <div class="actions wide">
+            <button type="submit">建立腳本</button>
+            <button type="reset" class="ghost">清空</button>
+          </div>
+        </form>
+
+        <ul id="script-list" class="list"></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>
+        腳本改完存檔，重新載入代理頁面就生效（腳本是 <code>no-cache</code> 的）。
+        代理網址的形狀是 <code>/p/&lt;siteId&gt;/</code>。
+      </p>
+    </footer>
+
+    <script src="/admin/api.js"></script>
+    <script src="/admin/app.js"></script>
+  </body>
+</html>
