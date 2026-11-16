@@ -7,6 +7,11 @@ const DEFAULTS = Object.freeze({
   host: '127.0.0.1',
   upstreamTimeoutMs: 20_000,
   maxRequestBodyBytes: 25 * 1024 * 1024,
+  gmXhrTimeoutMs: 30_000,
+  gmXhrMaxResponseBytes: 10 * 1024 * 1024,
+  gmXhrMaxRequestBytes: 1024 * 1024,
+  gmXhrRateLimit: 60,
+  gmXhrRateWindowMs: 60_000,
 });
 
 function parseInteger(raw, fallback, { min, max }) {
@@ -47,6 +52,32 @@ function loadConfig(env = process.env) {
       { min: 1, max: 1024 * 1024 * 1024 },
     ),
     logLevel: parseToken(env.LOCALMONKEY_LOG_LEVEL) ?? 'info',
+
+    // GM_xmlhttpRequest 的伺服器端轉發（/__lm/gm/xhr）
+    gmXhr: {
+      timeoutMs: parseInteger(env.LOCALMONKEY_GM_XHR_TIMEOUT_MS, DEFAULTS.gmXhrTimeoutMs, {
+        min: 1,
+        max: 600_000,
+      }),
+      maxResponseBytes: parseInteger(
+        env.LOCALMONKEY_GM_XHR_MAX_BYTES,
+        DEFAULTS.gmXhrMaxResponseBytes,
+        { min: 1, max: 1024 * 1024 * 1024 },
+      ),
+      maxRequestBytes: parseInteger(
+        env.LOCALMONKEY_GM_XHR_MAX_REQUEST_BYTES,
+        DEFAULTS.gmXhrMaxRequestBytes,
+        { min: 1, max: 64 * 1024 * 1024 },
+      ),
+      rateLimit: parseInteger(env.LOCALMONKEY_GM_XHR_RATE, DEFAULTS.gmXhrRateLimit, {
+        min: 1,
+        max: 100_000,
+      }),
+      rateWindowMs: parseInteger(env.LOCALMONKEY_GM_XHR_WINDOW_MS, DEFAULTS.gmXhrRateWindowMs, {
+        min: 1,
+        max: 3_600_000,
+      }),
+    },
   };
 }
 

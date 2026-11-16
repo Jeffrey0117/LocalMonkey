@@ -3,6 +3,7 @@
 const express = require('express');
 
 const { createInternalRouter } = require('./routes/internal.js');
+const { createGmXhrRouter } = require('./routes/gm-xhr.js');
 const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
@@ -36,7 +37,9 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
     fetchImpl,
   });
 
-  // 保留路徑：不進代理
+  // 保留路徑：不進代理。
+  // gm/xhr 要排在 internal 之前 —— internal router 的尾巴是 catch-all 404。
+  app.use('/__lm/gm', createGmXhrRouter({ store, config, logger, fetchImpl }));
   app.use('/__lm', createInternalRouter({ store }));
   app.use('/admin', createAdminRouter({ store, config, adminToken, logger }));
 
