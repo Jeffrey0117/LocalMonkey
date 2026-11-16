@@ -26,6 +26,19 @@
   box-sizing: border-box;
 }
 
+/*
+ * ⛔ 這條一定要在最前面。
+ *
+ * 這個控制台到處用 `hidden` 屬性當顯示開關（分頁、空狀態、提示列、投遞區塊…），
+ * 但只要 CSS 給那個元素任何 `display`，就會蓋掉瀏覽器預設的 `[hidden] {display:none}`
+ * ——「作者樣式贏過 UA 樣式」，跟選擇器權重無關。結果是 JS 設了 hidden 卻完全藏不住，
+ * 而且不會報錯。實際中招過三個：`.editor-pane`、`#version-hint`、`.delivery-row`
+ * （都是 display:flex）。在這裡一次擋掉整類問題。
+ */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -38,6 +51,8 @@ body {
   font: 14px/1.55 system-ui, -apple-system, 'Segoe UI', 'Noto Sans TC', sans-serif;
   display: flex;
   flex-direction: column;
+  /* 滿版高度。dvh 在手機上才不會被工具列吃掉；不支援的瀏覽器用上面的 100% */
+  height: 100dvh;
 }
 
 code,
@@ -167,13 +182,28 @@ main {
 
 /* ------------------------- 控制台（清單 + 編輯器） ------------------------- */
 
+/*
+ * 控制台的格線：左欄清單 + 右邊編輯區。
+ *
+ * ⛔ 這裡有三個子元素（sidebar、編輯器 pane、空狀態 pane）但只有兩欄，
+ * 所以**一定要把兩個 pane 明確放在同一個格子裡**。不然第三個子元素會被
+ * 自動排到「隱含的第二列第一欄」= 視窗左下角、貼著左緣（實際發生過）。
+ *
+ * `grid-template-rows: minmax(0, 1fr)` 也是必要的：只有一列、而且那一列可以縮。
+ * 不寫的話列高由內容決定，編輯器就不會撐滿視窗高度（實際發生過：744px 的視窗，
+ * 內容在 y≈420 就結束）。minmax(0,…) 的 0 等同於 min-height:0，少了它內容會把
+ * 列撐開而不是自己捲動。
+ */
 .console {
   display: grid;
   grid-template-columns: minmax(220px, 280px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
 .sidebar {
+  grid-column: 1;
+  grid-row: 1;
   border-right: 1px solid var(--line);
   overflow-y: auto;
   min-height: 0;
@@ -237,16 +267,22 @@ main {
   color: var(--text-dim);
 }
 
+/* 兩個 pane（編輯器 / 空狀態）疊在同一個格子，一次只顯示一個（靠 hidden 切換） */
 .editor-pane {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
 }
 
+/* 空狀態：置中在右邊的編輯區裡，不是浮在整個頁面的角落 */
 .placeholder-pane {
   align-items: center;
   justify-content: center;
+  padding: 24px;
+  text-align: center;
   color: var(--text-dim);
 }
 
@@ -629,14 +665,22 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 720px) {
+  /* 窄螢幕改成上下排。pane 的 grid-row 要跟著改，不然會被壓到清單那一列去 */
   .console {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(120px, 30vh) 1fr;
+    grid-template-rows: minmax(120px, 30vh) minmax(0, 1fr);
   }
 
   .sidebar {
+    grid-column: 1;
+    grid-row: 1;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .editor-pane {
+    grid-column: 1;
+    grid-row: 2;
   }
 }
 

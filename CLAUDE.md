@@ -38,7 +38,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，673 個測試
+npm test             # node:test，686 個測試
 npm run test:coverage
 ```
 
@@ -258,6 +258,21 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
     `tests/integration/admin-console-page.test.js` 用 `vm.Script` 檢查每支前端 JS，
     並且逐一請求 `index.html` 引用的每個 `/admin/` 資源。加新的前端檔案時不用改測試
     （它掃目錄），但**新增 `<script src>` 一定要跑一次測試**。
+25. **⛔ 用 `hidden` 屬性當顯示開關的元素，CSS 不能給它 `display`。**
+    作者樣式贏過瀏覽器預設的 `[hidden] {display:none}`（跟選擇器權重無關），
+    所以 JS 設了 `hidden` 卻完全藏不住，而且不報錯。這個專案中招過三個：
+    `.editor-pane`、`#version-hint`、`.delivery-row`（都是 `display:flex`）。
+    已經在 app.css 最前面放了 `[hidden] {display:none !important}` 一次擋掉整類。
+26. **grid 的子元素比欄數多，又沒寫 `grid-template-rows` → 多出來的會掉到隱含的第二列。**
+    控制台的 `.console` 是兩欄但有三個子元素（清單 + 編輯器 pane + 空狀態 pane），
+    空狀態因此跑到視窗左下角、貼著左緣；而且列高由內容決定，編輯器在 744px 的視窗裡
+    只到 y≈420。修法是把兩個 pane 都明確放在 `grid-column: 2; grid-row: 1`，
+    並把列寫成 `minmax(0, 1fr)`（那個 0 等同 min-height:0，少了它內容會把列撐開）。
+27. **CSS 版面的 bug，`vm.Script` 與資源路徑檢查完全抓不到**（地雷 18 只擋語法與 404）。
+    `admin-console-page.test.js` 現在會斷言那幾條「撐滿高度 / hidden 蓋得過 display /
+    pane 放在第二欄」的規則存在 —— 比沒有好，但真的要量 layout 還是得開瀏覽器
+    （這次是用 claude-in-chrome 量 getBoundingClientRect 驗完的）。
+
 19. **在區塊註解裡寫出「星號加斜線」的 pattern 字面值會把註解提前關掉。**
     `src/userscript/match.js` 的檔頭註解就這樣炸過一次（整個檔案語法錯誤，
     而且錯誤訊息只說 `Unexpected token '*'`）。要舉那個例子就用文字描述。
