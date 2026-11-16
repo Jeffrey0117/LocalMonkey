@@ -7,6 +7,7 @@ const { siteIdFromReferer, siteIdFromCookie } = require('../lib/site-resolve.js'
 const { isConnectAllowed } = require('../lib/connect-policy.js');
 const { createRateLimiter } = require('../lib/rate-limit.js');
 const { assertOriginAllowed, SsrfBlockedError } = require('../lib/ssrf.js');
+const { isAllowedHost } = require('../lib/gm-allow-hosts.js');
 const { forwardGmRequest, isAllowedMethod, GmForwardError } = require('../services/gm-forward.js');
 const { canonicalGrant } = require('../userscript/grants.js');
 
@@ -158,7 +159,12 @@ function createGmXhrRouter({ store, config, logger, fetchImpl }) {
           if (!hop.allowed) {
             throw new GmForwardError('connect_not_allowed', hop.reason, { status: 403 });
           }
-          await assertOriginAllowed(url.origin, { allowPrivate: config.allowPrivate });
+          // 白名單命中 → 豁免「私網位址」那條，但 @connect 已經在上面驗過了。
+          // 每一跳都重算：302 導到別的私網主機一樣要被擋。
+          const allowlisted = isAllowedHost(settings.allowHosts, url);
+          await assertOriginAllowed(url.origin, {
+            allowPrivate: config.allowPrivate || allowlisted,
+          });
         },
       });
 

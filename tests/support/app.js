@@ -24,6 +24,7 @@ async function startApp(options = {}) {
       maxRequestBytes: 256 * 1024,
       rateLimit: 1000,
       rateWindowMs: 60_000,
+      allowHosts: [],
       ...options.config?.gmXhr,
     },
   };

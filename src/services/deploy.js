@@ -9,6 +9,7 @@
 
 const { parseUserscript } = require('../userscript/parse.js');
 const { excludeAppliesToHost } = require('../userscript/match.js');
+const { blockedConnectHosts } = require('../lib/gm-allow-hosts.js');
 const { slugForHost, uniqueSlug } = require('./site-slug.js');
 const { fetchAsset } = require('./fetch-asset.js');
 
@@ -120,6 +121,21 @@ async function collectAssets(context, parsed) {
   };
 }
 
+/**
+ * 腳本宣告了本機位址的 `@connect`，但那個主機沒進 GM 白名單 → 會靜默失敗。
+ * 靜默失敗是最糟的結果，所以存檔時就大聲講出來，並附上要設的 env。
+ */
+function allowlistWarnings(parsed, config) {
+  const blocked = blockedConnectHosts(parsed.connect, config?.gmXhr?.allowHosts);
+  if (blocked.length === 0) return [];
+
+  return [
+    `這支腳本要用 GM_xmlhttpRequest 連 ${blocked.join('、')}（本機位址）。` +
+      'SSRF 防護會擋下來，除非把確切的 host:port 加進 LOCALMONKEY_GM_ALLOW_HOSTS' +
+      '（例如 LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001），然後重啟 LocalMonkey。',
+  ];
+}
+
 function writeScript(store, { scriptId, source, parsed, metadata, enabled, orderIndex }) {
   const fields = {
     name: parsed.name,
@@ -175,6 +191,7 @@ async function deployUserscript(context, input) {
   const warnings = [
     ...parsed.notices.map((notice) => notice.message),
     ...assets.warnings,
+    ...allowlistWarnings(parsed, context.config),
   ];
 
   return {

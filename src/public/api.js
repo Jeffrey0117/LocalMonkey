@@ -59,6 +59,8 @@ window.LocalMonkeyApi = (function createApi() {
 
     /* ---------------- 網站（唯讀清單 + 啟用開關 / 指定主機） ---------------- */
 
+    getSettings: () => request('GET', '/settings').then((data) => data.settings),
+
     listSites: () => request('GET', '/sites').then((data) => data.sites),
     updateSite: (siteId, patch) => request('PATCH', `/sites/${id(siteId)}`, patch).then((data) => data.site),
     deleteSite: (siteId) => request('DELETE', `/sites/${id(siteId)}`),

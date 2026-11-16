@@ -32,7 +32,13 @@
     },
   });
 
+  // 先把伺服器設定抓下來（資訊列要靠它判斷 @connect 會不會被擋），失敗也不要卡住啟動
+  const settingsReady = window.LocalMonkeyApi.getSettings()
+    .then((settings) => window.LocalMonkeyInfoBar.setSettings(settings))
+    .catch(() => {});
+
   Promise.all([
+    settingsReady,
     scriptsTab.init({
       onSitesChanged: () => sitesTab.refresh().catch((error) => banner.error(error)),
     }),

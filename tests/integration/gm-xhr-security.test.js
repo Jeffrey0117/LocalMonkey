@@ -531,3 +531,102 @@ test('gm/xhr 不需要後台 token（被代理頁面是匿名的）', async (t) 
   const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/x` });
   assert.equal(result.status, 200);
 });
+
+/* ------------- GM 白名單（LOCALMONKEY_GM_ALLOW_HOSTS）：真實腳本的場景 ------------- */
+
+/**
+ * ig-helper / threads-helper / xpost-card 都宣告 `@connect localhost`，實際目標是
+ * AutoReel 後端 http://localhost:8001。照原本的 SSRF 防護這三支會全滅，而且是
+ * 「腳本看起來有跑、請求靜默失敗」那種最難除錯的失敗。
+ *
+ * 白名單只影響這個端點、精確比對 host:port、預設空的，而且 @connect 還是要過。
+ */
+
+test('⭐ 白名單命中 → 打得到本機後端（這就是三支真實腳本要的）', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+  });
+  const script = seedScript(app, { connect: ['127.0.0.1'] });
+
+  // 把假後端的確切 host:port 放進白名單
+  app.config.gmXhr.allowHosts = [new URL(apiUpstream.origin).host];
+
+  const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/api/jobs` });
+
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(apiUpstream.lastRequest().url, '/api/jobs');
+});
+
+test('白名單沒命中 → 照樣被 SSRF 擋掉', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+  });
+  const script = seedScript(app, { connect: ['127.0.0.1'] });
+
+  app.config.gmXhr.allowHosts = ['localhost:9999'];
+
+  const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/x` });
+
+  assert.equal(result.status, 403);
+  assert.equal(result.body.error, 'ssrf_blocked');
+  assert.equal(apiUpstream.received.length, 0);
+});
+
+test('⛔ 白名單不會繞過 @connect：兩道都要過', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+  });
+  // 腳本只宣告了別的主機，沒宣告這個後端
+  const script = seedScript(app, { connect: ['api.example.com'] });
+
+  app.config.gmXhr.allowHosts = [new URL(apiUpstream.origin).host];
+
+  const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/x` });
+
+  assert.equal(result.status, 403);
+  assert.equal(result.body.error, 'connect_not_allowed');
+  assert.equal(apiUpstream.received.length, 0);
+});
+
+test('⛔ 白名單是「精確比對」：port 不同就不算', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+  });
+  const script = seedScript(app, { connect: ['127.0.0.1'] });
+
+  const host = new URL(apiUpstream.origin).host;
+  app.config.gmXhr.allowHosts = [host.replace(/:\d+$/, ':1')];
+
+  const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/x` });
+
+  assert.equal(result.status, 403);
+  assert.equal(result.body.error, 'ssrf_blocked');
+});
+
+test('⛔ 白名單裡的主機不能被 302 當跳板導到別的私網主機', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+    apiHandler: (req, res) => {
+      res.writeHead(302, { location: 'http://127.0.0.1:9/internal' });
+      res.end();
+    },
+  });
+  const script = seedScript(app, { connect: ['127.0.0.1'] });
+
+  app.config.gmXhr.allowHosts = [new URL(apiUpstream.origin).host];
+
+  const result = await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/redirect` });
+
+  assert.equal(result.status, 403, JSON.stringify(result.body));
+  assert.equal(result.body.error, 'ssrf_blocked', '轉址後的主機不在白名單裡');
+});
+
+test('預設（白名單空的）就是擋掉本機目標', async (t) => {
+  const { app, apiUpstream } = await arrange(t, {
+    appOptions: { config: { allowPrivate: false } },
+  });
+  const script = seedScript(app, { connect: ['127.0.0.1'] });
+
+  assert.deepEqual(app.config.gmXhr.allowHosts ?? [], []);
+  assert.equal((await callXhr(app, { scriptId: script.id, url: `${apiUpstream.origin}/x` })).status, 403);
+});

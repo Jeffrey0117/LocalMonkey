@@ -408,6 +408,29 @@ v1 的 `run_at` 兩個值（`head-end` / `body-end`）仍然合法，注入位�
    「站自己的 origin」時才送；回應的 `set-cookie` 濾掉
 7. **速率限制**：每個網站各算各的（預設 60 次 / 分鐘）
 
+#### 打自己機器上的後端（`LOCALMONKEY_GM_ALLOW_HOSTS`）
+
+很多實用的腳本是在打你自己的服務（`@connect localhost` + `http://localhost:8001`）。
+SSRF 防護會擋掉這種請求 —— 而且是最難除錯的那種失敗：**腳本看起來有跑，請求靜默失敗**。
+
+所以有一份獨立的白名單：
+
+```bash
+LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
+```
+
+- 只影響 `/__lm/gm/xhr`，**不影響代理目標**（那是 `LOCALMONKEY_ALLOW_PRIVATE`，範圍大得多）
+- **精確比對，含 port**：`localhost` 不等於 `localhost:8001`，不做萬用字元
+- 命中只豁免「私網位址」那條；腳本的 `@connect` 還是要過（**兩道都要過**）
+- 連 302 轉址的每一跳都重新比對 —— 白名單上的主機不能被當成跳板
+
+> ⚠ 放行之後，被你代理的那些網頁就能透過 LocalMonkey 打到你內網的這些主機
+> （只限列出來的 `host:port`，而且只有宣告過對應 `@connect` 的腳本能用）。
+> 只列你自己的服務。
+
+沒放行的時候**不會靜默失敗**：存檔時 `warnings` 會講、控制台的權限列會把那個
+`@connect` 標成紅字「未放行」，並附上要設的 env。
+
 ---
 
 ## 設定
@@ -428,6 +451,7 @@ v1 的 `run_at` 兩個值（`head-end` / `body-end`）仍然合法，注入位�
 | `LOCALMONKEY_GM_XHR_MAX_BYTES` | `10485760` | `GM_xmlhttpRequest` 回應大小上限 |
 | `LOCALMONKEY_GM_XHR_MAX_REQUEST_BYTES` | `1048576` | 單次呼叫可以帶的 body 上限 |
 | `LOCALMONKEY_GM_XHR_RATE` / `_WINDOW_MS` | `60` / `60000` | 每個網站的速率限制 |
+| `LOCALMONKEY_GM_ALLOW_HOSTS` | *(空)* | 允許 `GM_xmlhttpRequest` 打的本機 `host:port`（精確比對，見上方說明） |
 
 完整說明見 [`.env.example`](.env.example)。把它複製成 `.env` 就會生效（`npm start` 走 Node 內建的 `--env-file-if-exists`，不需要 dotenv，零依賴沒被打破）。真實環境變數優先於 `.env` 裡的值。
 

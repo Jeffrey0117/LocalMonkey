@@ -112,6 +112,20 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
     };
   }
 
+  /**
+   * 控制台需要知道的伺服器設定。
+   * 目前只有 GM 白名單 —— 前端要靠它判斷「這支腳本的 @connect 會不會被擋」。
+   * 刻意不回任何 token 或路徑。
+   */
+  router.get('/settings', (req, res) => {
+    res.json({
+      settings: {
+        gmAllowHosts: config.gmXhr?.allowHosts ?? [],
+        allowPrivate: config.allowPrivate === true,
+      },
+    });
+  });
+
   router.get('/sites', (req, res) => {
     res.json({ sites: store.sites.listWithScripts() });
   });

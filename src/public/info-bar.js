@@ -9,6 +9,30 @@
 window.LocalMonkeyInfoBar = (function createInfoBar() {
   const { escapeHtml } = window.LocalMonkeyUi;
 
+  // 伺服器的 GM 白名單（由 app.js 在啟動時灌進來）。沒拿到就當空的。
+  const state = { gmAllowHosts: [] };
+
+  function setSettings(settings) {
+    state.gmAllowHosts = Array.isArray(settings?.gmAllowHosts) ? settings.gmAllowHosts : [];
+  }
+
+  /** 字面上的本機位址（跟 src/lib/gm-allow-hosts.js 的 looksLoopback 同一組規則） */
+  function looksLoopback(host) {
+    const hostname = String(host ?? '').toLowerCase().split(':')[0];
+    if (['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname)) return true;
+    return hostname.startsWith('127.') || hostname.endsWith('.localhost');
+  }
+
+  function isCovered(host) {
+    const declared = String(host ?? '').toLowerCase().split(':')[0];
+    return state.gmAllowHosts.some((entry) => String(entry).toLowerCase().split(':')[0] === declared);
+  }
+
+  /** 會被 SSRF 擋掉的 @connect 主機 → 要在權限列紅字講出來，不能靜默失敗 */
+  function connectBlocked(host) {
+    return looksLoopback(host) && !isCovered(host);
+  }
+
   const STATUS_LABEL = { ready: '可代理', 'needs-host': '要指定主機', rejected: '不能用' };
   const STATUS_CLASS = { ready: 'ok', 'needs-host': 'warn', rejected: 'bad' };
 
@@ -63,7 +87,13 @@ window.LocalMonkeyInfoBar = (function createInfoBar() {
       parts.push('<span class="chip is-bad" title="請改成列出具體主機">@connect * ✕</span>');
     } else if (parsed.connect.length > 0) {
       parts.push(
-        parsed.connect.map((host) => `<span class="chip">${escapeHtml(host)}</span>`).join(''),
+        parsed.connect
+          .map((host) =>
+            connectBlocked(host)
+              ? `<span class="chip is-bad" title="這是本機位址，但沒有加進 LOCALMONKEY_GM_ALLOW_HOSTS —— GM_xmlhttpRequest 會被擋掉（靜默失敗）。請設成例如 LOCALMONKEY_GM_ALLOW_HOSTS=${escapeHtml(host)}:8001 再重啟。">@connect ${escapeHtml(host)} ✕ 未放行</span>`
+              : `<span class="chip">${escapeHtml(host)}</span>`,
+          )
+          .join(''),
       );
     }
 
@@ -128,5 +158,5 @@ window.LocalMonkeyInfoBar = (function createInfoBar() {
     ].join('');
   }
 
-  return { render, badge, STATUS_LABEL };
+  return { render, badge, setSettings, connectBlocked, STATUS_LABEL };
 })();

@@ -56,3 +56,29 @@ test('請求 body 上限有預設', () => {
   assert.ok(loadConfig({}).maxRequestBodyBytes >= 1024 * 1024);
   assert.equal(loadConfig({ LOCALMONKEY_MAX_BODY_BYTES: '2048' }).maxRequestBodyBytes, 2048);
 });
+
+test('LOCALMONKEY_GM_ALLOW_HOSTS：逗號分隔，預設空的', () => {
+  assert.deepEqual(loadConfig({}).gmXhr.allowHosts, [], '預設什麼都不放行');
+
+  assert.deepEqual(
+    loadConfig({ LOCALMONKEY_GM_ALLOW_HOSTS: 'localhost:8001, 127.0.0.1:8001' }).gmXhr.allowHosts,
+    ['localhost:8001', '127.0.0.1:8001'],
+  );
+});
+
+test('GM_xmlhttpRequest 的上限有預設值，env 可以蓋', () => {
+  const defaults = loadConfig({});
+  assert.equal(defaults.gmXhr.timeoutMs, 30_000);
+  assert.equal(defaults.gmXhr.maxResponseBytes, 10 * 1024 * 1024);
+  assert.equal(defaults.gmXhr.rateLimit, 60);
+
+  const custom = loadConfig({ LOCALMONKEY_GM_XHR_RATE: '5', LOCALMONKEY_GM_XHR_TIMEOUT_MS: '1000' });
+  assert.equal(custom.gmXhr.rateLimit, 5);
+  assert.equal(custom.gmXhr.timeoutMs, 1000);
+});
+
+test('抓 @require 的上限也有預設值', () => {
+  const defaults = loadConfig({});
+  assert.equal(defaults.assetTimeoutMs, 15_000);
+  assert.equal(defaults.assetMaxBytes, 5 * 1024 * 1024);
+});

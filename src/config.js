@@ -2,6 +2,8 @@
 
 const path = require('node:path');
 
+const { parseAllowHosts } = require('./lib/gm-allow-hosts.js');
+
 const DEFAULTS = Object.freeze({
   port: 30600,
   host: '127.0.0.1',
@@ -89,6 +91,9 @@ function loadConfig(env = process.env) {
         min: 1,
         max: 3_600_000,
       }),
+
+      // 預設空的。只影響 GM_xmlhttpRequest，不影響代理目標（見 lib/gm-allow-hosts.js）
+      allowHosts: parseAllowHosts(env.LOCALMONKEY_GM_ALLOW_HOSTS),
     },
   };
 }

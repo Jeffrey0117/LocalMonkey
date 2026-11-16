@@ -466,3 +466,61 @@ test('source 空的 → 丟錯（不要存一支空腳本）', async (t) => {
 
   await assert.rejects(() => deployUserscript(context, { source: '   ' }), /空/);
 });
+
+/* ------------------- GM 白名單的存檔警告（靜默失敗是最糟的結果） ------------------- */
+
+test('⭐ 腳本要連 localhost 但白名單沒放行 → 存檔時就警告，並附上要設的 env', async (t) => {
+  const context = deps(t);
+
+  const result = await deployUserscript(context, {
+    source: script([
+      '// @name 打本機後端',
+      '// @match https://www.instagram.com/*',
+      '// @grant GM_xmlhttpRequest',
+      '// @connect localhost',
+    ]),
+  });
+
+  const warning = result.warnings.find((entry) => /LOCALMONKEY_GM_ALLOW_HOSTS/.test(entry));
+  assert.ok(warning, `沒有警告：${JSON.stringify(result.warnings)}`);
+  assert.ok(warning.includes('localhost'));
+  assert.ok(/擋/.test(warning), '要說清楚會被擋掉');
+});
+
+test('白名單已經放行了就不要再警告（假警告會讓人不信警告）', async (t) => {
+  const context = deps(t, { config: { gmXhr: { allowHosts: ['localhost:8001'] } } });
+
+  const result = await deployUserscript(context, {
+    source: script([
+      '// @name 打本機後端',
+      '// @match https://www.instagram.com/*',
+      '// @grant GM_xmlhttpRequest',
+      '// @connect localhost',
+    ]),
+  });
+
+  assert.equal(
+    result.warnings.some((entry) => /LOCALMONKEY_GM_ALLOW_HOSTS/.test(entry)),
+    false,
+    JSON.stringify(result.warnings),
+  );
+});
+
+test('只連公開主機的腳本不會收到白名單警告', async (t) => {
+  const context = deps(t);
+
+  const result = await deployUserscript(context, {
+    source: script([
+      '// @name 打公開 API',
+      '// @match https://x.com/*',
+      '// @grant GM_xmlhttpRequest',
+      '// @connect translate.googleapis.com',
+      '// @connect pbs.twimg.com',
+    ]),
+  });
+
+  assert.equal(
+    result.warnings.some((entry) => /LOCALMONKEY_GM_ALLOW_HOSTS/.test(entry)),
+    false,
+  );
+});
