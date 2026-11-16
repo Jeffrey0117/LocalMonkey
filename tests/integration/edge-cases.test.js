@@ -59,7 +59,8 @@ test('內部出錯 → 500 錯誤頁，而且不吐堆疊', async (t) => {
   seedSite(app.store, { targetOrigin: upstream.origin });
 
   // 模擬「注入腳本時 DB 查詢炸掉」這種我們沒預期到的狀況
-  app.store.scripts.listActiveForSite = () => {
+  // （v2 起注入走 store.userscripts.listForInjection，不再是 scripts.listActiveForSite）
+  app.store.userscripts.listForInjection = () => {
     throw new Error('資料庫在這個瞬間掛了');
   };
 

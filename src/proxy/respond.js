@@ -4,7 +4,7 @@ const { filterResponseHeaders } = require('../lib/headers.js');
 const { rewriteSetCookie } = require('../lib/cookies.js');
 const { rewriteLocation } = require('../lib/location.js');
 const { rewriteRootPaths, injectScripts } = require('../lib/html.js');
-const { matchGlob } = require('../lib/glob.js');
+const { planInjection } = require('../lib/injection.js');
 const { SITE_COOKIE_NAME } = require('../lib/site-resolve.js');
 
 const HTML_CONTENT_TYPE = /text\/html|application\/xhtml\+xml/i;
@@ -20,17 +20,12 @@ function pathnameOf(pathWithQuery) {
 }
 
 /**
- * 挑出這個頁面要注入的腳本：啟用中、match_glob 對得上，並照 run_at 分兩組。
+ * 挑出這個頁面要注入的東西：啟用中、path_glob 對得上、沒被 @exclude 排除，
+ * 再照 run_at 分成三個注入位置（headStart / head / body）。
+ * 真正的規則在 lib/injection.js。
  */
 function selectScripts(store, site, pathname) {
-  const active = store.scripts
-    .listActiveForSite(site.id)
-    .filter((script) => matchGlob(script.match_glob, pathname));
-
-  return {
-    head: active.filter((script) => script.run_at === 'head-end'),
-    body: active.filter((script) => script.run_at === 'body-end'),
-  };
+  return planInjection(store.userscripts.listForInjection(site.id), { pathname });
 }
 
 /**

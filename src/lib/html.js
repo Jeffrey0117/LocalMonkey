@@ -69,12 +69,29 @@ function rewriteRootPaths(html, siteId) {
     });
 }
 
+function escapeAttribute(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function scriptTag(scriptId) {
   return `<script src="/__lm/script/${encodeURIComponent(scriptId)}.js"></script>`;
 }
 
-function renderTags(scripts) {
-  return scripts.map((script) => scriptTag(script.id)).join('\n');
+/**
+ * entry 可以是 `{ id }`（v1：腳本投遞路徑）或 `{ src }`（任意路徑：GM shim、@require 資產）。
+ */
+function tagFor(entry) {
+  return typeof entry.src === 'string'
+    ? `<script src="${escapeAttribute(entry.src)}"></script>`
+    : scriptTag(entry.id);
+}
+
+function renderTags(entries) {
+  return entries.map((entry) => tagFor(entry)).join('\n');
 }
 
 function insertBefore(html, closingTag, payload, { fromEnd }) {
@@ -84,19 +101,64 @@ function insertBefore(html, closingTag, payload, { fromEnd }) {
   return `${html.slice(0, index)}${payload}\n${html.slice(index)}`;
 }
 
+const HEAD_OPEN_PATTERN = /<head\b[^>]*>/i;
+const HTML_OPEN_PATTERN = /<html\b[^>]*>/i;
+const DOCTYPE_PATTERN = /<!doctype[^>]*>/i;
+
+/**
+ * 插在 `<head>` 的**第一個子元素**。
+ *
+ * ⛔ 這跟 v1 的 head-end（`</head>` 之前）不一樣，而且差別很要緊：
+ * `</head>` 之前已經晚於頁面自己的 `<script>`，想 hook `fetch` / `XMLHttpRequest`
+ * 的 document-start 腳本在那個位置會完全失效。
+ *
+ * 退路依序是 `<html>` 之後 → doctype 之後 → 整份文件最前面。
+ * doctype 一定要留在最前面，不然瀏覽器會掉進 quirks mode。
+ */
+function insertAtHeadStart(html, payload) {
+  if (typeof html !== 'string' || typeof payload !== 'string' || payload.length === 0) {
+    return html;
+  }
+
+  for (const pattern of [HEAD_OPEN_PATTERN, HTML_OPEN_PATTERN, DOCTYPE_PATTERN]) {
+    const matched = pattern.exec(html);
+    if (!matched) continue;
+
+    const at = matched.index + matched[0].length;
+    return `${html.slice(0, at)}${payload}${html.slice(at)}`;
+  }
+
+  return `${payload}\n${html}`;
+}
+
 /**
  * @param {string} html
- * @param {{ head: Array<{id: string}>, body: Array<{id: string}> }} scripts 已依 order_index 排好
+ * @param {{
+ *   headStart?: Array<{id?: string, src?: string}>,
+ *   head?: Array<{id?: string, src?: string}>,
+ *   body?: Array<{id?: string, src?: string}>,
+ * }} scripts 已依 order_index 排好
  */
-function injectScripts(html, { head = [], body = [] } = {}) {
+function injectScripts(html, { headStart = [], head = [], body = [] } = {}) {
   if (typeof html !== 'string') return html;
 
+  const withHeadStart =
+    headStart.length === 0 ? html : insertAtHeadStart(html, renderTags(headStart));
+
   const withHead =
-    head.length === 0 ? html : insertBefore(html, '</head>', renderTags(head), { fromEnd: false });
+    head.length === 0
+      ? withHeadStart
+      : insertBefore(withHeadStart, '</head>', renderTags(head), { fromEnd: false });
 
   return body.length === 0
     ? withHead
     : insertBefore(withHead, '</body>', renderTags(body), { fromEnd: true });
 }
 
-module.exports = { rewriteRootPaths, injectScripts, scriptTag, ROOT_PATH_ATTRIBUTES };
+module.exports = {
+  rewriteRootPaths,
+  injectScripts,
+  insertAtHeadStart,
+  scriptTag,
+  ROOT_PATH_ATTRIBUTES,
+};
