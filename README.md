@@ -20,7 +20,29 @@ http://你的機器:30600/p/ptt/        ← 打開這個網址就是改造後的
 
 - **不用在每台裝置安裝任何東西。** 打開代理網址就有。
 - **腳本集中管理、集中生效。** 改一次，所有裝置下次載入就是新版。
-- **不需要重新部署。** 後台新增網站與腳本，立刻生效（腳本是 `no-cache`）。
+- **不需要重新部署。** 後台存檔就生效（腳本是 `no-cache`）。
+- **直接吃 Tampermonkey 腳本。** 把 `.user.js` 丟進控制台，它自己讀 header 判斷
+  要配哪些網域、自己建站、自己掛上去。`@match`、`@grant`、`@run-at`、`@require`
+  都看得懂。
+
+```
+┌─ LocalMonkey ─────────────── [腳本] [網站] ───────── + 丟腳本 ─┐
+│ ┌────────────────┬──────────────────────────────────────────┐ │
+│ │ ● 蝦皮去廣告 2.1│ 兩站通用：深色 + 記次數        [儲存] ●啟用│ │
+│ │ ○ 深色模式   1.0│ ──────────────────────────────────────── │ │
+│ │ ● abc        0.3│ 配對  www.example.com · seller.shopee.tw │ │
+│ │                │ 權限  GM_addStyle ✓  GM_setValue ✓       │ │
+│ │                │ 時機  document-start                     │ │
+│ │                │ ──────────────────────────────────────── │ │
+│ │                │  1 // ==UserScript==                     │ │
+│ │                │  2 // @name  兩站通用                     │ │
+│ │                │    ⋯ CodeMirror（行號、高亮、括號配對）    │ │
+│ └────────────────┴──────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**資訊列（配對／權限／時機）是唯讀的**，跟著你打字即時從 userscript header
+重新解析。要改配對就改 header —— 單一真相來源，不做第二個輸入口。
 
 ---
 
@@ -63,40 +85,67 @@ http://127.0.0.1:30600/admin?token=<你的 token>
 
 > 開完會自動 302 到乾淨的 `/admin`，網址列不會留著 token。
 
+### 從 v1 升級
+
+直接 `git pull` + `npm start` 就好，schema migration 會自己跑（`PRAGMA user_version` 1 → 2）：
+
+- v1 的腳本程式碼搬進 `scripts.source`，`match_glob` 變成 `script_sites` 的綁定
+- `run_at` 的 `head-end` → `document-start`、`body-end` → `document-end`
+- 網站與啟用狀態原樣保留
+
+v1 的腳本沒有 userscript header，所以 metadata 是空的（會標成 `legacy`）——
+在控制台裡幫它補上 `// ==UserScript==` 區塊並存檔，就會變成完整的 v2 腳本。
+v1 的後台 API 也還在（見下面的「相容路徑」）。
+
 ---
 
-## 60 秒做出第一支腳本
+## 60 秒丟進第一支腳本
 
 1. 開 `http://127.0.0.1:30600/admin?token=<token>`
-2. **新增網站**：
-   - `id` → `example`（這是網址用的 slug，只能小寫英數與連字號）
-   - `名稱` → `Example Domain`
-   - `target_origin` → `https://example.com`
-3. 按該網站的 **管理腳本** → **新增腳本**：
-   - `名稱` → `換掉標題`
-   - `程式碼` →
-     ```js
-     const target = document.querySelector('h1') || document.querySelector('p');
-     if (target) target.textContent = 'LocalMonkey was here';
-     ```
-   - 執行時機留 `body-end`、`match_glob` 留 `*`
-4. 按網站卡片上的 **複製** 拿到代理網址，用任何裝置打開 `http://<你的機器 IP>:30600/p/example/`
+2. 按右上角 **+ 丟腳本**，把下面這段貼進去（或直接把 `.user.js` 檔拖到框裡）：
 
-同樣的事用 curl 做（CI 或腳本裡會用到）：
+   ```js
+   // ==UserScript==
+   // @name        Example 深色模式
+   // @version     1.0
+   // @match       https://example.com/*
+   // @run-at      document-start
+   // @grant       GM_addStyle
+   // ==/UserScript==
+
+   GM_addStyle('body { background: #111; color: #eee }');
+   document.title = 'LocalMonkey was here';
+   ```
+
+3. 下面會即時列出**偵測到的網域**，每一列標著能不能代理與原因：
+
+   | 狀態 | 來源 pattern | 要代理的主機 | 路徑 |
+   |---|---|---|---|
+   | 可代理 | `https://example.com/*` | `https://example.com` | `*` |
+
+4. 按 **部署**。網站（slug `example-com`）會自己長出來，腳本也掛上去了。
+5. 到 **網站** 分頁按 **複製**，用任何裝置打開 `http://<你的機器 IP>:30600/p/example-com/`
+
+> 之後改腳本就在左邊點那支、直接改、`Ctrl+S`。改到 `@match` 的話，網站與綁定
+> 會跟著重算（拿掉的網域會自動解綁）。
+
+同樣的事用 curl 做（CI 或腳本裡會用到）—— **只要給 source，其他全部從 header 推**：
 
 ```bash
 TOKEN=$(cat data/admin-token.txt)
 
-curl -X POST http://127.0.0.1:30600/admin/api/sites \
+# 先看它會判斷成什麼（不寫入）
+curl -s -X POST http://127.0.0.1:30600/admin/api/userscript/parse \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"id":"example","name":"Example Domain","target_origin":"https://example.com"}'
+  -d '{"source":"// ==UserScript==\n// @name demo\n// @match https://example.com/*\n// ==/UserScript==\ndocument.title=\"x\";"}'
 
-curl -X POST http://127.0.0.1:30600/admin/api/sites/example/scripts \
+# 真的部署
+curl -s -X POST http://127.0.0.1:30600/admin/api/scripts \
   -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"name":"replace-h1","code":"document.querySelector(\"h1\").textContent = \"LocalMonkey was here\";"}'
+  -d '{"source":"// ==UserScript==\n// @name demo\n// @match https://example.com/*\n// ==/UserScript==\ndocument.title=\"x\";"}'
 
-curl http://127.0.0.1:30600/p/example/ | tail -3
-# → ...<script src="/__lm/script/scr_6ab04c06d6529379.js"></script>
+curl -s http://127.0.0.1:30600/p/example-com/ | grep __lm
+# → <script src="/__lm/script/scr_6ab04c06d6529379.js"></script>
 ```
 
 ---
@@ -107,8 +156,9 @@ curl http://127.0.0.1:30600/p/example/ | tail -3
 flowchart TD
     B["瀏覽器<br/>GET /p/example/shop?q=1"] --> R{路由}
 
-    R -->|"/admin, /admin/api/*"| A["後台<br/>token 驗證 + 跨站檢查"]
-    R -->|"/__lm/script/:id.js"| S["腳本投遞<br/>包 try/catch、no-cache"]
+    R -->|"/admin, /admin/api/*"| A["控制台<br/>token 驗證 + 跨站檢查"]
+    R -->|"/__lm/script, /__lm/shim, /__lm/asset"| S["投遞<br/>腳本 / GM shim / @require 資產"]
+    R -->|"/__lm/gm/xhr"| X["GM_xmlhttpRequest 轉發<br/>來源 + @connect + SSRF + 速率"]
     R -->|"/p/:siteId/*"| P["主代理"]
     R -->|"其他根路徑"| F["根路徑 fallback<br/>cookie → Referer → 404"]
 
@@ -118,8 +168,11 @@ flowchart TD
     U --> T["回應處理<br/>砍 CSP / 改 Location / 改 Set-Cookie<br/>改寫根絕對路徑、注入 script tag"]
     T --> B
 
-    A -.->|讀寫| DB[("SQLite<br/>sites / scripts")]
+    A -->|"POST /scripts"| D["部署服務<br/>解析 header → 自動建站 → 重算綁定"]
+    D -.->|寫| DB[("SQLite<br/>sites / scripts<br/>script_sites / assets")]
+    A -.->|讀寫| DB
     S -.->|讀| DB
+    X -.->|"讀：@connect / 綁定"| DB
     T -.->|"讀：哪些腳本要注入"| DB
 ```
 
@@ -134,7 +187,7 @@ flowchart TD
 | 回應 | 丟掉 `content-security-policy`、`x-frame-options`、`content-encoding`、`strict-transport-security`、`cross-origin-*`…（CSP 會擋掉注入；`content-encoding` 與已解壓的 body 不符） |
 | 3xx | `Location` 指向上游自己 → 改寫成 `/p/<id>/…`；指向別的網域 → 原樣保留 |
 | Set-Cookie | 拿掉 `Domain=`、拿掉 `Secure`、`SameSite` 改 `Lax`，多條逐條處理（不合併） |
-| HTML | 保守改寫根絕對路徑 → 注入 `<script src="/__lm/script/<id>.js">`（`head-end` 在 `</head>` 前、`body-end` 在 `</body>` 前，依 `order_index` 排序） |
+| HTML | 保守改寫根絕對路徑 → 注入 `<script src="…">`：`document-start` 插在 `<head>` 的第一個子元素、`document-end` / `document-idle` 在 `</body>` 前（v1 的 `head-end` 維持在 `</head>` 前），依 `order_index` 排序。每支腳本的順序是 GM shim → `@require` 資產 → 腳本本身 |
 | 非 HTML | 原樣回傳 buffer（圖片、JS、CSS 都是 byte-for-byte） |
 
 ### 檔案地圖
@@ -145,24 +198,41 @@ src/
   app.js                組 express app（路由順序都在這）
   config.js             env → 設定物件（全部有預設值）
   logger.js             小 logger（分級、寫 stdout/stderr）
+  userscript/           ★ userscript header 的解析（純函式，不碰 DB/網路）
+    metadata.js         抓 // @key value
+    match.js            @match → (主機, 路徑 glob) 的語意轉換
+    grants.js           @grant 支援清單與識別字濾網
+    parse.js            把上面組成一份解析結果
   db/
     index.js            開 DB + 跑 migration
-    migrations.js       PRAGMA user_version 的單向 migration
+    migrations.js       PRAGMA user_version 的單向 migration（v1 → v2）
     sites.js            sites repository
-    scripts.js          scripts repository
+    userscripts.js      ★ v2：腳本本體 + script_sites 綁定
+    scripts.js          v1 的相容投影（code / site_id / match_glob）
+    assets.js           ★ @require / @resource 的內容定址快取
     store.js            把 repository 綁上同一個 db handle
     errors.js           DuplicateIdError / NotFoundError
+  services/
+    deploy.js           ★ 解析 → 自動建站 → 重算綁定 → 抓資產
+    site-slug.js        主機名 → 代理網址用的 slug
+    fetch-asset.js      抓 @require（SSRF + 大小上限）
+    gm-forward.js       ★ GM_xmlhttpRequest 的實際轉發
   lib/
-    glob.js             match_glob 比對（* ** ?）
+    glob.js             path_glob 比對（* ** ?）
+    injection.js        ★ 這一頁要注入什麼、插在哪裡
+    html.js             根絕對路徑改寫、三個注入點
+    user-script.js      包 try/catch、宣告 GM_* 區域變數、document-idle 排程
+    gm-shim.js          ★ shim 的伺服器端（組 config + render）
+    connect-policy.js   ★ @connect 白名單判斷
+    rate-limit.js       ★ 滑動視窗速率限制
+    read-capped.js      ★ 有上限地讀 fetch 回應
     validate.js         零依賴輸入驗證
     ssrf.js             origin → DNS → 內網判斷
     ip.js               IPv4/IPv6 位址分類（fail closed）
     headers.js          請求/回應 header 過濾
     cookies.js          Set-Cookie 改寫、Cookie 解析
-    html.js             根絕對路徑改寫、腳本注入
     location.js         3xx Location 改寫
     site-resolve.js     cookie / Referer → siteId
-    user-script.js      把使用者的 JS 包 try/catch
     ids.js              id 產生與時間戳
   proxy/
     handler.js          兩個入口（主路由 / fallback）共用的管線
@@ -170,17 +240,28 @@ src/
     respond.js          回應改寫與送出
     body.js             讀請求 body（有大小上限）
   routes/
-    admin-page.js       /admin 單頁 UI + ?token= 登入
-    admin-api.js        /admin/api/* REST
-    internal.js         /__lm/script/:id.js
+    admin-page.js       /admin 控制台 + ?token= 登入
+    admin-api.js        /admin/api/* REST（v2 + v1 相容）
+    internal.js         /__lm/script|shim|asset
+    gm-xhr.js           ★ POST /__lm/gm/xhr（七道防護）
   middleware/
     admin-auth.js       token 驗證 + 跨站寫入阻擋
   views/pages.js        錯誤頁（給人看的，不吐堆疊）
-  public/               後台 UI（原生 HTML/CSS/JS，沒有 build step）
+  public/               控制台 UI（原生 HTML/CSS/JS，沒有 build step）
+    index.html          骨架
+    app.css             深色、吃滿寬度
+    ui.js api.js        小工具 / API 呼叫層
+    info-bar.js         唯讀資訊列
+    editor.js           CodeMirror 包裝（載不起來就退回 textarea）
+    scripts-tab.js      清單 + 編輯器
+    sites-tab.js        網站唯讀清單
+    drop-script.js      「+ 丟腳本」的解析與部署
+    gm-shim.js          ★ 真的跑在被代理頁面上的 GM shim
+    vendor/             CodeMirror 5（單一檔案 + CSS + MIT 授權）
 tests/
   unit/                 純函式
   integration/          真的起 server + 真的假上游，對打 fetch
-  support/              測試用的 harness（假上游、app、raw HTTP client）
+  support/              測試 harness（假上游、app、raw HTTP、假 DOM）
 ```
 
 ---
@@ -189,20 +270,40 @@ tests/
 
 全部需要 `Authorization: Bearer <token>` 或 cookie `lm_admin`。
 
+### 腳本（v2：只給 source，其他從 header 推）
+
 | Method | Path | 說明 |
 |---|---|---|
-| GET | `/admin/api/sites` | 列出網站 |
-| POST | `/admin/api/sites` | 新增（`id`、`name`、`target_origin`、`enabled?`） |
-| GET | `/admin/api/sites/:id` | 單一網站 |
-| PUT | `/admin/api/sites/:id` | 更新（`name`、`target_origin`、`enabled`；不能改 `id`） |
-| DELETE | `/admin/api/sites/:id` | 刪除（連帶刪掉它的腳本） |
-| GET | `/admin/api/sites/:id/scripts` | 該網站的腳本，依 `order_index` 排序 |
-| POST | `/admin/api/sites/:id/scripts` | 新增腳本 |
-| GET | `/admin/api/scripts/:scriptId` | 單一腳本 |
-| PUT | `/admin/api/scripts/:scriptId` | 更新 |
-| DELETE | `/admin/api/scripts/:scriptId` | 刪除 |
+| POST | `/admin/api/userscript/parse` | `{ source }` → 只解析不寫入（預覽與資訊列用） |
+| GET | `/admin/api/scripts` | 列表（不含 `source`，帶 `site_ids`） |
+| POST | `/admin/api/scripts` | `{ source }` → 解析 + 自動建站 + 綁定 → `{ script, targets, warnings }` |
+| GET | `/admin/api/scripts/:id` | 單支（含 `source`、`metadata`、`sites`） |
+| PUT | `/admin/api/scripts/:id` | 帶 `source` → 重新解析並重算綁定；只帶 `enabled` / `order_index` → 單純更新 |
+| DELETE | `/admin/api/scripts/:id` | 刪除 |
 
-腳本欄位：`name`、`code`（上限 1MB）、`enabled`、`match_glob`（預設 `*`）、`run_at`（`head-end` / `body-end`）、`order_index`。
+`targets` 是「偵測到的網域表」，每一列有 `status`（`ready` / `needs-host` / `rejected`）、
+`host`、`targetOrigin`、`pathGlob`、`siteId` 與 `reason`。
+
+### 網站（唯讀清單）
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/admin/api/sites` | 列出網站，含 `scripts`（掛著哪些腳本）、`auto_created`、`from_pattern` |
+| PATCH | `/admin/api/sites/:id` | 只准改 `name` / `target_origin` / `enabled` |
+| POST | `/admin/api/sites` | 手動建站（保留；需要 `id`、`name`、`target_origin`） |
+| GET | `/admin/api/sites/:id` | 單一網站 |
+| PUT | `/admin/api/sites/:id` | 同 PATCH |
+| DELETE | `/admin/api/sites/:id` | 刪除（只掛在它身上的腳本會跟著走，還掛在別站的留著） |
+
+### v1 的相容路徑（仍然有效）
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/admin/api/sites/:id/scripts` | 該網站的腳本（v1 形狀） |
+| POST | `/admin/api/sites/:id/scripts` | 新增一支純 JS（`name`、`code`、`match_glob`、`run_at`、`order_index`） |
+| PUT | `/admin/api/scripts/:id` | 帶 v1 欄位（`code` / `match_glob` / `run_at`…）時走這條 |
+
+v1 的 `run_at` 兩個值（`head-end` / `body-end`）仍然合法，注入位置與 v1 完全一樣。
 
 錯誤格式：
 
@@ -212,16 +313,100 @@ tests/
 
 `error` 可能是 `validation_failed`、`ssrf_blocked`、`duplicate_id`、`not_found`、`invalid_json`、`unauthorized`、`cross_site_blocked`、`internal_error`。
 
-### match_glob
+### path_glob
 
 比對的是**代理後的 path**（不含 query）：
 
 | pattern | 意思 |
 |---|---|
-| `*` | 所有頁面（預設值，特例：單獨一個 `*` 就是 match-all） |
+| `*` | 所有頁面（特例：單獨一個 `*` 就是 match-all） |
 | `/shop/**` | `/shop/` 底下全部，含更深的層 |
 | `/shop/*` | `/shop/` 的下一層（不跨 `/`） |
 | `/page?.html` | `?` 比對單一個非 `/` 字元 |
+
+---
+
+## userscript header 怎麼被解讀
+
+### `@match` → 網站 + 路徑
+
+**Chrome match pattern 的路徑 `*` 會跨 `/`，LocalMonkey 的 glob 單星號不跨**，
+所以路徑一定要做語意轉換 —— 照抄會變成腳本不執行或到處都執行，而且不報錯：
+
+| `@match` 的路徑 | 轉成 `path_glob` |
+|---|---|
+| `/*` | `*`（match-all 特例） |
+| `/items/*` | `/items/**` |
+| `/a/*/b` | `/a/**/b` |
+| `/exact` | `/exact` |
+| *(沒有路徑)* | `*` |
+
+主機的部分決定這一列的狀態：
+
+| 主機樣式 | 狀態 | 行為 |
+|---|---|---|
+| `www.example.com` | `ready` | 直接建站，target `https://www.example.com` |
+| `*.example.com` | `needs-host` | 先建 `example.com`，UI 標示「可以到網站分頁改成具體子網域」 |
+| `*`、`<all_urls>`、`*://*/*` | `rejected` | 擋下來。反向代理必須指向具體主機，配全世界沒有意義 |
+
+`*://` 視為 https；`http://` 照收但會標示不安全。`@include` 走同一條路但更寬鬆；
+`/正則/` 形式只在「開頭就是字面 scheme + 字面主機」時才採用，抽不出來就 `rejected` —— 不猜。
+
+`@exclude` / `@exclude_match` 會變成該綁定的排除規則，注入判斷時命中就整支不跑。
+
+### `@run-at` → 注入位置
+
+| `@run-at` | 注入位置 |
+|---|---|
+| `document-start` | **`<head>` 的第一個子元素** —— 在頁面自己的 `<script>` 之前，所以 hook `fetch` 有效 |
+| `document-end`（預設） | `</body>` 之前 |
+| `document-idle` | `</body>` 之前，外面包 `DOMContentLoaded` + `requestIdleCallback` |
+
+### `@grant` → GM API
+
+只有宣告過的 API 會出現在腳本的 scope 裡（跟 Tampermonkey 一致）。
+`@grant none` 或完全沒宣告 → 不投遞 shim。
+
+| API | 實作 |
+|---|---|
+| `unsafeWindow` | `window`（我們本來就在頁面 scope） |
+| `GM_addStyle` | 塞一個 `<style>` 進 head，回傳該元素 |
+| `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | `localStorage`，key 前綴 `__lm_gm_<scriptId>_`，同步 |
+| `GM.*`（GM4） | 同上但回 Promise |
+| `GM_openInTab` | `window.open` |
+| `GM_setClipboard` | `navigator.clipboard.writeText`，失敗回 `false` 並 warn |
+| `GM_registerMenuCommand` | 右下角一顆浮動按鈕展開選單（`all: initial` 隔離樣式） |
+| `GM_notification` | `Notification` API，沒權限就退回頁面內 toast |
+| `GM_info` | 從 metadata 合成 |
+| `GM_getResourceText` / `GM_getResourceURL` | 走伺服器端的 `assets` 快取 |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | 走伺服器端轉發（見下） |
+
+**沒實作的（`GM_download`、`GM_cookie`…）不會靜默失敗**：呼叫時會 `console.error`
+說明，後台該腳本的權限列也會標紅字。shim 自己的任何錯誤都只進 `console.warn` ——
+它絕不能弄壞被代理的原站。
+
+### `@require` / `@resource`
+
+存腳本時在**伺服器端**抓下來，用 sha256 內容定址存進 DB，投遞路徑
+`/__lm/asset/<sha256>.js`，排在使用者腳本之前（照宣告順序）。
+
+理由：離線可用、不會把你的瀏覽行為洩漏給 CDN、內容定址天然有完整性保證。
+抓失敗不會擋住存檔 —— 腳本照樣存起來，後台把那條標成失效。
+
+### `GM_xmlhttpRequest` 的伺服器端轉發
+
+`POST /__lm/gm/xhr` 會讓伺服器**代替你**發請求，所以它鎖了七道：
+
+1. **來源**：跨站請求擋掉；`Referer`（優先）或 `lm_site` cookie 必須對應到啟用中的網站
+2. **`@connect`**：目標主機必須被腳本宣告過（網域也涵蓋子網域）。`@connect *` 一律拒絕。
+   沒宣告 → 只准打站自己的 origin。另外要求 `@grant GM_xmlhttpRequest`
+3. **SSRF**：解析 DNS 擋私網，**連每一跳轉址都重驗**
+4. **method 白名單**：GET / POST / PUT / PATCH / DELETE / HEAD
+5. **大小與逾時**：預設 10MB / 30s
+6. **不轉送憑證**：送上游的 header 是白名單組出來的，不是把進來的請求複製一份 ——
+   瀏覽器的 Cookie 與後台 token 結構上不可能外流。腳本自己帶的 `cookie` 只在打
+   「站自己的 origin」時才送；回應的 `set-cookie` 濾掉
+7. **速率限制**：每個網站各算各的（預設 60 次 / 分鐘）
 
 ---
 
@@ -237,6 +422,12 @@ tests/
 | `LOCALMONKEY_UPSTREAM_TIMEOUT_MS` | `20000` | 等上游的逾時 |
 | `LOCALMONKEY_MAX_BODY_BYTES` | `26214400` | 代理請求 body 上限 |
 | `LOCALMONKEY_LOG_LEVEL` | `info` | `silent`/`error`/`warn`/`info`/`debug` |
+| `LOCALMONKEY_ASSET_TIMEOUT_MS` | `15000` | 抓 `@require` / `@resource` 的逾時 |
+| `LOCALMONKEY_ASSET_MAX_BYTES` | `5242880` | 單一 `@require` 的大小上限 |
+| `LOCALMONKEY_GM_XHR_TIMEOUT_MS` | `30000` | `GM_xmlhttpRequest` 等上游的逾時 |
+| `LOCALMONKEY_GM_XHR_MAX_BYTES` | `10485760` | `GM_xmlhttpRequest` 回應大小上限 |
+| `LOCALMONKEY_GM_XHR_MAX_REQUEST_BYTES` | `1048576` | 單次呼叫可以帶的 body 上限 |
+| `LOCALMONKEY_GM_XHR_RATE` / `_WINDOW_MS` | `60` / `60000` | 每個網站的速率限制 |
 
 完整說明見 [`.env.example`](.env.example)。把它複製成 `.env` 就會生效（`npm start` 走 Node 內建的 `--env-file-if-exists`，不需要 dotenv，零依賴沒被打破）。真實環境變數優先於 `.env` 裡的值。
 
@@ -291,6 +482,17 @@ tests/
 9. **HTML 改寫走 latin1 來回轉換**，所以不管頁面是 UTF-8 還是 Big5，沒被我們改到的 byte 都原封不動。
    代價是我們不碰 charset 宣告，也不做編碼轉換。
 10. **不是繞付費牆的工具。** 伺服器拿不到的東西，注入 JS 也拿不到。
+11. **腳本之間沒有沙箱隔離。** GM_* 是每支腳本自己的（各自的 scope、各自的
+    `localStorage` 命名空間），但它們都跑在頁面的 JS 環境裡，看得到彼此改過的 DOM
+    與全域變數。Tampermonkey 的 `@sandbox` 沒有對應實作。
+12. **`GM_getResourceText` 的內容是存檔時嵌進去的**（因為它是同步 API）。
+    超過 256KB 或不是文字型的資源只給 `GM_getResourceURL`，`GM_getResourceText` 回 `null` 並 warn。
+13. **`@require` 抓到的東西不會自動更新。** 同一個 URL 只抓一次（內容定址），
+    CDN 上的內容改了也不會重抓 —— 要換就改 URL。
+14. **從 v1 升級上來的腳本 metadata 是空的。** migration 保住了程式碼與綁定，
+    但沒有重新解析（migration 不該依賴會演化的解析器）。那些腳本在控制台裡存一次檔就會補上。
+15. **`@connect` 只比對主機，不比對路徑或 port。** 跟 Tampermonkey 一樣的粒度。
+16. **沒有「只在 iframe 外執行」。** `@noframes` 解析得出來、存得起來，但注入時還沒用它。
 
 ---
 
@@ -303,18 +505,22 @@ npm run test:coverage
 
 用 Node 內建的 `node:test`，沒有裝測試框架。整合測試**真的把 server 起在 port 0**，
 並且用一個同樣跑在 port 0 的假上游對打（不 mock `fetch`，不然測不到真東西）。
+GM shim 則是放進自己寫的假 DOM（`tests/support/dom.js`）**真的執行**，不是比對字串。
 
 最近一次執行：
 
 ```
-ℹ tests 241
-ℹ pass 241
+ℹ tests 561
+ℹ pass 561
 ℹ fail 0
 
-ℹ all files         |  97.23 |    91.86 |   97.27 |
+ℹ all files         |  97.34 |    89.95 |   97.95 |
 ```
 
 （line % / branch % / funcs %）
+
+前端是瀏覽器程式，這裡測不到互動 —— 但「會整個壞掉卻無聲」的兩種狀況有釘住：
+每支前端 JS 都要能被 `vm.Script` 解析、`index.html` 引用的每個資源都要真的回 200。
 
 ---
 
