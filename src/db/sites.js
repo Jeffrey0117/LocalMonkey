@@ -10,25 +10,43 @@ function toFlag(value) {
 }
 
 function mapRow(row) {
-  return row ? { ...row, enabled: row.enabled === 1 } : null;
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    name: row.name,
+    target_origin: row.target_origin,
+    enabled: row.enabled === 1,
+    auto_created: row.auto_created === 1,
+    from_pattern: row.from_pattern,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function getSite(db, id) {
+  return mapRow(db.prepare('SELECT * FROM sites WHERE id = ?').get(id));
 }
 
 function createSite(db, input) {
   const timestamp = nowIso();
-  const row = {
-    id: input.id,
-    name: input.name,
-    target_origin: input.target_origin,
-    enabled: toFlag(input.enabled ?? 1),
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
 
   try {
     db.prepare(
-      `INSERT INTO sites (id, name, target_origin, enabled, created_at, updated_at)
-       VALUES (@id, @name, @target_origin, @enabled, @created_at, @updated_at)`,
-    ).run(row);
+      `INSERT INTO sites
+         (id, name, target_origin, enabled, auto_created, from_pattern, created_at, updated_at)
+       VALUES
+         (@id, @name, @target_origin, @enabled, @auto_created, @from_pattern, @created_at, @updated_at)`,
+    ).run({
+      id: input.id,
+      name: input.name,
+      target_origin: input.target_origin,
+      enabled: toFlag(input.enabled ?? 1),
+      auto_created: toFlag(input.auto_created ?? 0),
+      from_pattern: input.from_pattern ?? null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
   } catch (cause) {
     if (String(cause.code).startsWith('SQLITE_CONSTRAINT_PRIMARYKEY')) {
       throw new DuplicateIdError(`網站 id「${input.id}」已經存在`);
@@ -36,11 +54,7 @@ function createSite(db, input) {
     throw cause;
   }
 
-  return mapRow(row);
-}
-
-function getSite(db, id) {
-  return mapRow(db.prepare('SELECT * FROM sites WHERE id = ?').get(id));
+  return getSite(db, input.id);
 }
 
 function listSites(db) {
@@ -48,6 +62,24 @@ function listSites(db) {
     .prepare('SELECT * FROM sites ORDER BY created_at, id')
     .all()
     .map((row) => mapRow(row));
+}
+
+/** 「網站」分頁要顯示每個站掛了哪些腳本 */
+function listSitesWithScripts(db) {
+  const attached = db
+    .prepare(
+      `SELECT DISTINCT ss.site_id, s.id, s.name, s.enabled, s.order_index, s.created_at
+         FROM script_sites ss
+         JOIN scripts s ON s.id = ss.script_id
+        ORDER BY s.order_index, s.created_at, s.id`,
+    )
+    .all()
+    .reduce((acc, row) => {
+      const entry = { id: row.id, name: row.name, enabled: row.enabled === 1 };
+      return acc.set(row.site_id, [...(acc.get(row.site_id) ?? []), entry]);
+    }, new Map());
+
+  return listSites(db).map((site) => ({ ...site, scripts: attached.get(site.id) ?? [] }));
 }
 
 function updateSite(db, id, patch) {
@@ -72,8 +104,45 @@ function updateSite(db, id, patch) {
   return getSite(db, id);
 }
 
+/**
+ * 刪站。
+ *
+ * v2 的腳本不再被 sites 的外鍵綁住（一支腳本可以掛多個站，也可以暫時誰都不掛），
+ * 但 v1 的語意是「刪站連帶刪它的腳本」。折衷：只刪掉**因為這次刪站而變成沒有任何
+ * 綁定**的腳本，其他（還掛在別站的、本來就還沒掛上去的）一律留著 ——
+ * 使用者還沒寫好 @match 的腳本不該因為刪了個無關的站就消失。
+ */
 function removeSite(db, id) {
-  return db.prepare('DELETE FROM sites WHERE id = ?').run(id).changes > 0;
+  const apply = db.transaction(() => {
+    const affected = db
+      .prepare('SELECT script_id FROM script_sites WHERE site_id = ?')
+      .all(id)
+      .map((row) => row.script_id);
+
+    const changes = db.prepare('DELETE FROM sites WHERE id = ?').run(id).changes;
+    if (changes === 0) return false;
+
+    const remaining = db.prepare(
+      'SELECT COUNT(*) AS total FROM script_sites WHERE script_id = ?',
+    );
+    const removeScript = db.prepare('DELETE FROM scripts WHERE id = ?');
+
+    for (const scriptId of affected) {
+      if (remaining.get(scriptId).total === 0) removeScript.run(scriptId);
+    }
+
+    return true;
+  });
+
+  return apply();
 }
 
-module.exports = { createSite, getSite, listSites, updateSite, removeSite, UPDATABLE_COLUMNS };
+module.exports = {
+  createSite,
+  getSite,
+  listSites,
+  listSitesWithScripts,
+  updateSite,
+  removeSite,
+  UPDATABLE_COLUMNS,
+};
