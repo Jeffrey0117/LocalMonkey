@@ -70,12 +70,30 @@ test('site 不存在時 get 回 null', () => {
   assert.equal(memoryStore().sites.get('nope'), null);
 });
 
+/*
+ * ⚠ 這條原本是「建 b 再建 a，斷言回傳的 id 是排序過的」——
+ * 但那只有在兩筆的 created_at **剛好同一毫秒**（於是由 id 決勝）時才成立。
+ * 時鐘在兩次 insert 之間走一格的話，正確答案就是 b, a，測試卻會失敗。
+ * 實測 40 次裡會紅 1 次。改成把兩種情況都釘死，順便真的驗到 created_at 優先。
+ */
 test('site list 依 created_at 再依 id 排序', () => {
   const store = memoryStore();
   makeSite(store, { id: 'b' });
   makeSite(store, { id: 'a' });
-  const ids = store.sites.list().map((site) => site.id);
-  assert.deepEqual(ids.slice().sort(), ids, `實際順序 ${ids.join(',')}`);
+
+  // created_at 相同（同一毫秒建立）→ 由 id 決定順序
+  store.db.prepare("UPDATE sites SET created_at = '2026-01-01T00:00:00.000Z'").run();
+  assert.deepEqual(
+    store.sites.list().map((site) => site.id),
+    ['a', 'b'],
+  );
+
+  // created_at 不同 → 建立時間優先，id 不管
+  store.db.prepare("UPDATE sites SET created_at = '2025-01-01T00:00:00.000Z' WHERE id = 'b'").run();
+  assert.deepEqual(
+    store.sites.list().map((site) => site.id),
+    ['b', 'a'],
+  );
 });
 
 test('site 更新只改傳進來的欄位，並更新 updated_at', async () => {

@@ -240,3 +240,65 @@ test('沒有綁定的腳本不會注入到任何網站', async (t) => {
   const body = (await rawRequest({ port: app.port, path: `/p/${sites[0]}/` })).text;
   assert.equal(body.includes(script.id), false);
 });
+
+/* ---------- 同一個站台掛多支腳本（四支真實腳本都配 www.instagram.com） ---------- */
+
+test('⭐ 多支腳本掛在同一個自動建立的站上，照 order_index 注入', async (t) => {
+  const { app, sites } = await arrange(t);
+
+  // 真實情況：ig-comment-scraper / ig-dm-sender / ig-helper / peekly 都配 www.instagram.com
+  const third = seedScript(app, {
+    source: "console.log('third');",
+    bindings: [{ site_id: sites[0], path_glob: '*' }],
+  });
+  const first = seedScript(app, {
+    source: "console.log('first');",
+    bindings: [{ site_id: sites[0], path_glob: '*' }],
+  });
+  const second = seedScript(app, {
+    source: "console.log('second');",
+    bindings: [{ site_id: sites[0], path_glob: '*' }],
+  });
+
+  app.store.userscripts.update(first.id, { order_index: 1 });
+  app.store.userscripts.update(second.id, { order_index: 2 });
+  app.store.userscripts.update(third.id, { order_index: 3 });
+
+  const body = (await rawRequest({ port: app.port, path: `/p/${sites[0]}/` })).text;
+
+  assert.ok(body.indexOf(first.id) < body.indexOf(second.id), '1 要在 2 前面');
+  assert.ok(body.indexOf(second.id) < body.indexOf(third.id), '2 要在 3 前面');
+});
+
+test('同站多腳本：停用其中一支不影響其他支的順序', async (t) => {
+  const { app, sites } = await arrange(t);
+
+  const a = seedScript(app, { bindings: [{ site_id: sites[0], path_glob: '*' }] });
+  const b = seedScript(app, { bindings: [{ site_id: sites[0], path_glob: '*' }] });
+  const c = seedScript(app, { bindings: [{ site_id: sites[0], path_glob: '*' }] });
+
+  app.store.userscripts.update(a.id, { order_index: 1 });
+  app.store.userscripts.update(b.id, { order_index: 2, enabled: 0 });
+  app.store.userscripts.update(c.id, { order_index: 3 });
+
+  const body = (await rawRequest({ port: app.port, path: `/p/${sites[0]}/` })).text;
+
+  assert.ok(body.includes(a.id));
+  assert.equal(body.includes(b.id), false, '停用的不注入');
+  assert.ok(body.includes(c.id));
+  assert.ok(body.indexOf(a.id) < body.indexOf(c.id));
+});
+
+test('同站多腳本：各自的 @exclude 只影響自己', async (t) => {
+  const { app, sites } = await arrange(t);
+
+  const everywhere = seedScript(app, { bindings: [{ site_id: sites[0], path_glob: '*' }] });
+  const notOnAdmin = seedScript(app, {
+    bindings: [{ site_id: sites[0], path_glob: '*', exclude_globs: ['/admin/**'] }],
+  });
+
+  const admin = (await rawRequest({ port: app.port, path: `/p/${sites[0]}/admin/x` })).text;
+
+  assert.ok(admin.includes(everywhere.id), '沒排除的照注入');
+  assert.equal(admin.includes(notOnAdmin.id), false);
+});
