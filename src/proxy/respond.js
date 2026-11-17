@@ -3,7 +3,7 @@
 const { filterResponseHeaders } = require('../lib/headers.js');
 const { rewriteSetCookie } = require('../lib/cookies.js');
 const { rewriteLocation } = require('../lib/location.js');
-const { rewriteRootPaths, injectScripts } = require('../lib/html.js');
+const { rewriteDocumentUrls, injectScripts } = require('../lib/html.js');
 const { planInjection } = require('../lib/injection.js');
 const { SITE_COOKIE_NAME } = require('../lib/site-resolve.js');
 
@@ -31,11 +31,18 @@ function selectScripts(store, site, pathname) {
 /**
  * HTML 改寫一律走 latin1。latin1 ↔ Buffer 是 byte-lossless，
  * 所以不管頁面是 UTF-8、Big5 還是什麼，沒被我們改到的 byte 都原封不動。
+ *
+ * 改寫要吃 `target_origin`（不只 siteId）—— `<base href>` 與 meta refresh
+ * 的值可能是絕對網址，得先判斷它指的是不是這個站。
  */
 function transformHtml(buffer, { site, scripts }) {
   const source = buffer.toString('latin1');
-  const injected = injectScripts(rewriteRootPaths(source, site.id), scripts);
-  return Buffer.from(injected, 'latin1');
+  const rewritten = rewriteDocumentUrls(source, {
+    siteId: site.id,
+    targetOrigin: site.target_origin,
+  });
+
+  return Buffer.from(injectScripts(rewritten, scripts), 'latin1');
 }
 
 function copyHeaders(res, response, site) {

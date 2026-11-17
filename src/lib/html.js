@@ -7,6 +7,9 @@
  * 另一種東西。代價是只認得被引號包起來的屬性值，這點寫在 README 的已知限制。
  */
 
+const { rewriteBaseHref } = require('./base-tag.js');
+const { rewriteMetaRefresh } = require('./meta-refresh.js');
+
 const ROOT_PATH_ATTRIBUTES = ['src', 'href', 'action', 'poster', 'formaction'];
 
 function escapeForRegExp(input) {
@@ -67,6 +70,22 @@ function rewriteRootPaths(html, siteId) {
       const rewritten = rewriteSrcset(value, siteId);
       return rewritten === value ? match : `${lead}${quote}${rewritten}${quote}`;
     });
+}
+
+/**
+ * 一份 HTML 裡所有要改寫的網址，一次做完。
+ *
+ * 順序是規格的一部分：`<base>` 與 meta refresh **先做**，根絕對路徑最後做。
+ * 這兩步產出的值已經帶 `/p/<siteId>/` 前綴，所以第三步會跳過它們
+ * （`needsRewrite` 看得出前綴），但把順序寫明比依賴那個巧合安全。
+ *
+ * @param {string} html
+ * @param {{ siteId: string, targetOrigin: string }} site
+ */
+function rewriteDocumentUrls(html, { siteId, targetOrigin } = {}) {
+  const withBase = rewriteBaseHref(html, { siteId, targetOrigin });
+  const withRefresh = rewriteMetaRefresh(withBase, { siteId, targetOrigin });
+  return rewriteRootPaths(withRefresh, siteId);
 }
 
 function escapeAttribute(value) {
@@ -157,6 +176,7 @@ function injectScripts(html, { headStart = [], head = [], body = [] } = {}) {
 
 module.exports = {
   rewriteRootPaths,
+  rewriteDocumentUrls,
   injectScripts,
   insertAtHeadStart,
   scriptTag,
