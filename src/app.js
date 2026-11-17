@@ -9,6 +9,7 @@ const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
 const { createFaviconService } = require('./services/favicon.js');
 const { createTranslationService } = require('./translate/service.js');
+const { createCrawler } = require('./translate/crawl.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
 
@@ -55,6 +56,10 @@ function createApp({
   });
   app.locals.translation = translation;
 
+  // 「預先翻譯整站」（規格 §6）。進度在 DB 裡，所以這個 instance 不持有狀態。
+  const crawler = createCrawler({ store, config, logger, translation, fetchImpl });
+  app.locals.crawler = crawler;
+
   const { handleProxyRoute, handleFallbackRoute } = createProxyHandlers({
     store,
     config,
@@ -72,7 +77,7 @@ function createApp({
   app.use('/__lm', createInternalRouter({ store, favicons }));
   app.use(
     '/admin',
-    createAdminRouter({ store, config, adminToken, logger, fetchImpl, translation }),
+    createAdminRouter({ store, config, adminToken, logger, fetchImpl, translation, crawler }),
   );
 
   // 投遞給 Tampermonkey。免認證（憑證是路徑裡的 token），要排在代理的 catch-all 之前。

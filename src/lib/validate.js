@@ -6,6 +6,7 @@
  */
 
 const { MAX_PATTERN_LENGTH } = require('./glob.js');
+const { normalizeGlossary } = require('../translate/glossary.js');
 
 const SLUG_PATTERN = /^[a-z0-9-]{1,40}$/;
 const RESERVED_SLUGS = new Set(['admin', 'p', '__lm']);
@@ -135,6 +136,105 @@ function checkOrderIndex(input, errors) {
   return input;
 }
 
+/* --------------------------------------------------------------------- *
+ * v4：伺服器端翻譯層（SPEC-translate §7 / §8）
+ * --------------------------------------------------------------------- */
+
+/** BCP 47 的子集就夠：`zh-TW`、`en`、`pt-BR`。這個值會進 prompt 與 hash。 */
+const TARGET_LANG_PATTERN = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/;
+
+/** ollama 的模型名稱：`qwen2.5:latest`、`llama3:8b-instruct-q4_0` */
+const MODEL_NAME_PATTERN = /^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/;
+
+const MAX_TRANSLATION_LENGTH = 4000;
+const MAX_CRAWL_PAGES = 500;
+const MAX_CRAWL_DEPTH = 10;
+
+function checkTargetLang(input, errors) {
+  if (typeof input !== 'string' || !TARGET_LANG_PATTERN.test(input.trim())) {
+    errors.push({
+      field: 'translate_lang',
+      message: 'translate_lang 要像 zh-TW / zh-CN / en / ja',
+    });
+    return null;
+  }
+  return input.trim();
+}
+
+/** `null` 是合法的值：代表「用全域預設」（規格 §2） */
+function checkModelName(input, errors) {
+  if (input === null || input === '') return null;
+
+  if (typeof input !== 'string' || !MODEL_NAME_PATTERN.test(input.trim())) {
+    errors.push({
+      field: 'translate_model',
+      message: 'translate_model 要是 ollama 的模型名稱（例如 qwen2.5:latest），留空＝用預設',
+    });
+    return null;
+  }
+  return input.trim();
+}
+
+/** 術語表：UI 給「一行一個」的字串，API 也接受陣列。正規化在 translate/glossary.js */
+function checkGlossary(input, errors) {
+  if (typeof input !== 'string' && !Array.isArray(input)) {
+    errors.push({ field: 'glossary', message: 'glossary 要是陣列或一行一個詞的字串' });
+    return null;
+  }
+  return normalizeGlossary(input);
+}
+
+function validateManualTranslation(input) {
+  if (!isPlainObject(input)) {
+    return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
+  }
+
+  const errors = [];
+
+  if (typeof input.translated !== 'string' || input.translated.trim().length === 0) {
+    errors.push({ field: 'translated', message: '譯文不能是空的' });
+  } else if (input.translated.length > MAX_TRANSLATION_LENGTH) {
+    errors.push({ field: 'translated', message: `譯文最長 ${MAX_TRANSLATION_LENGTH} 個字` });
+  }
+
+  return result(errors, { translated: String(input.translated ?? '').trim() });
+}
+
+function validateCrawlRequest(input) {
+  if (!isPlainObject(input)) {
+    return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
+  }
+
+  const errors = [];
+  const value = {};
+
+  if ('startPath' in input) {
+    if (typeof input.startPath !== 'string' || !input.startPath.startsWith('/')) {
+      errors.push({ field: 'startPath', message: 'startPath 要以 / 開頭' });
+    } else {
+      value.startPath = input.startPath;
+    }
+  }
+
+  if ('maxPages' in input) {
+    if (!Number.isInteger(input.maxPages) || input.maxPages < 1 || input.maxPages > MAX_CRAWL_PAGES) {
+      errors.push({ field: 'maxPages', message: `maxPages 要是 1~${MAX_CRAWL_PAGES} 的整數` });
+    } else {
+      value.maxPages = input.maxPages;
+    }
+  }
+
+  if ('maxDepth' in input) {
+    if (!Number.isInteger(input.maxDepth) || input.maxDepth < 0 || input.maxDepth > MAX_CRAWL_DEPTH) {
+      errors.push({ field: 'maxDepth', message: `maxDepth 要是 0~${MAX_CRAWL_DEPTH} 的整數` });
+    } else {
+      value.maxDepth = input.maxDepth;
+    }
+  }
+
+  return result(errors, value);
+}
+
 function rejectImmutableField(input, field, errors) {
   if (field in input) {
     errors.push({ field, message: `${field} 不能用更新改掉` });
@@ -167,6 +267,14 @@ function validateSiteUpdate(input) {
   if ('name' in input) patch.name = checkName(input.name, errors);
   if ('target_origin' in input) patch.target_origin = checkTargetOrigin(input.target_origin, errors);
   if ('enabled' in input) patch.enabled = checkEnabled(input.enabled, errors);
+
+  // v4：翻譯設定（SPEC-translate §7 的「站台的翻譯設定」）
+  if ('translate_enabled' in input) {
+    patch.translate_enabled = checkEnabled(input.translate_enabled, errors, 'translate_enabled');
+  }
+  if ('translate_lang' in input) patch.translate_lang = checkTargetLang(input.translate_lang, errors);
+  if ('translate_model' in input) patch.translate_model = checkModelName(input.translate_model, errors);
+  if ('glossary' in input) patch.glossary = checkGlossary(input.glossary, errors);
 
   if (Object.keys(patch).length === 0 && errors.length === 0) {
     errors.push({ field: 'body', message: '沒有任何要更新的欄位' });
@@ -308,6 +416,11 @@ module.exports = {
   validateUserscriptCreate,
   validateUserscriptUpdate,
   validateParseRequest,
+  validateManualTranslation,
+  validateCrawlRequest,
+  MAX_TRANSLATION_LENGTH,
+  MAX_CRAWL_PAGES,
+  MAX_CRAWL_DEPTH,
   MAX_CODE_BYTES,
   MAX_NAME_LENGTH,
   RESERVED_SLUGS,

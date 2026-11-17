@@ -25,6 +25,7 @@ const DEFAULTS = Object.freeze({
   translateBatch: 20,
   translateKeepAlive: '30m',
   translateTimeoutMs: 120_000,
+  crawlPolitenessMs: 500,
 });
 
 function parseInteger(raw, fallback, { min, max }) {
@@ -137,6 +138,14 @@ function loadConfig(env = process.env) {
         env.LOCALMONKEY_TRANSLATE_TIMEOUT_MS,
         DEFAULTS.translateTimeoutMs,
         { min: 1_000, max: 1_800_000 },
+      ),
+
+      // ⛔ 爬蟲是在打**別人的**伺服器。規格 §6 要求每個請求之間至少 500ms，
+      // 所以這個值只准往上調 —— 往下調就是把功能變成壓測工具。
+      crawlPolitenessMs: parseInteger(
+        env.LOCALMONKEY_CRAWL_POLITENESS_MS,
+        DEFAULTS.crawlPolitenessMs,
+        { min: DEFAULTS.crawlPolitenessMs, max: 60_000 },
       ),
     },
   };
