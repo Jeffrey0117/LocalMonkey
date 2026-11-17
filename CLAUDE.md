@@ -6,6 +6,7 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 - [`docs/SPEC.md`](docs/SPEC.md) —— **v1：代理核心**（路由、SSRF、認證、HTML 改寫）
 - [`docs/SPEC-console.md`](docs/SPEC-console.md) —— **v2：油猴腳本控制台**（解析、多對多、GM API）
 - [`docs/SPEC-dashboard.md`](docs/SPEC-dashboard.md) —— **v3：`<base>` 修正 + 儀表板**
+- [`docs/SPEC-translate.md`](docs/SPEC-translate.md) —— **v4：伺服器端翻譯層**（切段、ollama、快取、爬蟲）
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -39,9 +40,13 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，772 個測試
+npm test             # node:test，1014 個測試
 npm run test:coverage
 ```
+
+v4 的翻譯層需要本機 **ollama**（`http://127.0.0.1:11434`，預設模型 `qwen2.5:latest`）。
+**沒裝也不影響其他功能** —— 每個站的 `translate_enabled` 預設是 0，而且連不上時
+代理照常回原文（有測試釘著）。
 
 手動驗證（不要用 `run_in_background` 開長駐 server）：
 
@@ -94,6 +99,15 @@ HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是�
 前兩步要在根絕對路徑**之前**做。它們共用 `lib/proxy-path.js` 的
 「這個網址指向被代理的站嗎」判斷（絕對網址 / protocol-relative / 根相對路徑都吃）。
 
+`proxy/respond.js` 的 `transformHtml()` 把三層改寫串起來，**順序同樣是規格**：
+
+```
+1. 網址改寫   rewriteDocumentUrls()
+2. 翻譯回填   translate/service.js  ← 要在 1 之後：切段器算的是字元座標，
+                                       之後的任何字串改動都會讓座標失效
+3. 腳本注入   injectScripts()       ← 只在頭尾加 tag，不影響前兩步
+```
+
 每一層都是獨立的純函式模組（`src/lib/*`），單元測試打的是它們；
 整合測試打的是整條管線（真 server + 真假上游）。
 
@@ -135,6 +149,49 @@ GET /s/<token>/<slug>.user.js      ← Tampermonkey（匿名，它帶不了 admi
 
 ---
 
+### 翻一頁怎麼走（v4）
+
+```
+proxy/respond.js → translate/service.js translateHtml()   ← 同步！
+  → charset.js       只有明確宣告 UTF-8 的文件才翻（理由見下面的設計決策）
+  → pipeline.js      collectSegments()：segment → splitEdges → decodeEntities
+                     → normalizeSpace → isTranslatable（rules.js）
+  → cache.js         批次查 translations（一次 SQL，manual 壓過 machine）
+      命中 → 用
+      沒命中 → **保留原文** + enqueue + queue.kick()（射後不理）
+  → pipeline.js      renderTranslated()：前後空白原樣放回、重新編碼 entity
+  → html-lang.js     真的翻了才把 <html lang> 改成目標語言
+```
+
+背景佇列（`translate/queue.js`）是**序列化**的，跟請求路徑完全脫鉤：
+
+```
+queue.drain() → claim(batchSize, exclude=這一輪試過的)
+              → ollama.translateBatch()  ← 索引 key、temperature 0、對齊防呆
+              → 成功：寫 translations（manual 不准被覆蓋）+ 清出佇列
+                失敗：整批退回原文、attempts +1、記 last_error、**換下一批繼續**
+```
+
+`src/translate/` 的分工（每支都小，純函式的部分測得最密）：
+
+```
+segment.js      HTML → 文字段清單（狀態機，保證 html.slice(start,end) === raw）
+rules.js        哪些段不翻（太短 / 純數字 / URL / 已含 CJK / 術語 / 太長）
+entities.js     entity 還原與重新編碼
+glossary.js     術語保護（詞邊界自己做）
+charset.js      這份文件能不能安全地插入 UTF-8 中文
+bytes.js        latin1 管線字串 ↔ 真文字
+pipeline.js     collectSegments / uniqueTexts / renderTranslated
+html-lang.js    翻完把 <html lang> 改掉
+prompt.js       給模型的 prompt（索引當 key）
+ollama.js       批次呼叫 + **對齊防呆**（整個功能最危險的地方）
+cache.js        快取的對外介面（SQL 在 db/translations.js）
+queue.js        背景佇列
+crawl-links.js  一頁裡可以爬的路徑
+crawl.js        預先翻譯整站
+service.js      門面：代理叫的就是這支
+```
+
 ### 後台前端（v3 之後是兩層）
 
 ```
@@ -173,6 +230,31 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
 - **`delivery_token`（v3）是投遞端點的憑證**，UNIQUE，建立時產生、可以輪替（＝撤銷舊網址）。
   migration 會幫既有資料回填，而且**重複跑 migrate 不會換掉既有的 token** ——
   已經安裝好的裝置還要靠它更新。
+
+## 資料模型（v4 新增）
+
+```
+translations     hash(PK) / source_text / target_lang / model / translated
+                 origin('machine'|'manual') / created_at / updated_at
+translate_queue  hash(PK) / source_text / target_lang / model / site_id
+                 attempts / last_error / created_at
+crawl_jobs       id(PK) / site_id / status / start_path / max_pages / max_depth
+                 pages_done / pages_found / segments_new / last_error / 時間
+sites            + translate_enabled / translate_lang / translate_model / glossary
+```
+
+- **`translations` 是主幹不是優化。** 靜態內容不常變 → 翻一次永久有效。
+  `hash` 含 model，所以**換模型會自動重翻**，舊的留著（可以比較、可以回退）。
+- **`origin='manual'` 永遠優先，而且在兩個地方都要成立**：寫入時
+  `ON CONFLICT DO UPDATE … WHERE origin <> 'manual'`，讀取時 manual 壓過 machine
+  （**跨模型也算** —— 不然換個模型就把人工改過的譯文丟了）。
+- **`translate_queue.site_id` 刻意不是外鍵。** 它只為了 UI 分組，刪站不該連帶砍掉
+  待翻的段；而且沒有外鍵，`INSERT OR IGNORE` 的語意才乾淨（地雷 15 講的是有外鍵時
+  會把違規一起吞掉）。
+- **`sites.translate_model` 是 NULL 時代表「用全域預設」**，DB 層原樣轉述不套預設值 ——
+  套了的話 UI 分不出「使用者選了這個」與「跟著全域走」。
+- `glossary` 存 JSON 陣列（跟 `script_sites.exclude_glob` 同一個做法），
+  讀寫一律走 `translate/glossary.js` 的 `parseGlossary` / `serializeGlossary`。
 
 ---
 
@@ -366,6 +448,32 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
     要確認某張頁面是不是從快取來的，看
     `performance.getEntriesByType('navigation')[0].transferSize`（0 ＝ 用快取）。
 
+### v4（翻譯層）踩到的
+
+35. **⛔ 一批失敗就 `break` 出佇列迴圈 ＝ 整站永遠停在那裡。**
+    第一版的 `queue.js` 在「整批失敗且下一批是同一批」時直接跳出迴圈（想避免原地
+    打轉）。實測（templatemo 整站 85 段）：ollama 冷啟動那一下逾時之後，**85 段全部
+    卡住不動**，控制台顯示「待翻 85」再也不會變，而且不會再出現任何錯誤訊息 ——
+    一次暫時性的逾時讓整個功能靜默死亡。
+    正解是把失敗的那批記進 `exclude` 然後**繼續做下一批**（`claimQueue` 支援
+    `exclude`）。原地打轉與整站停擺是兩個問題，不要用同一個 `break` 解。
+    有兩條測試釘著（「一批失敗不會把整條佇列卡死」「同一輪裡不會重複拿到剛失敗的那批」）。
+36. **逾時不是「連不上」，訊息混在一起會害人查錯方向。** 第一版的 catch 把所有 fetch
+    失敗都寫成「連不到 ollama」。實際情形是 ollama 好好的、只是冷啟動慢 ——
+    log 卻叫你去檢查一個沒壞的東西。現在分開了（`TimeoutError` / abort 走另一句）。
+37. **規格的「batch 20」是用短 UI 字串量的。** 真實頁面有整段文章。實測
+    templatemo 的 85 段共 4046 字元：**熱的時候 batch 20 要 5.2 秒**（259ms/段），
+    而冷啟動那一次直接撞到 120 秒逾時。數字本身沒問題（整站 85 段 12 秒清空），
+    但要知道「20 段」的成本跟那 20 段有多長成正比，不是固定的。
+38. **測試裡的無界 `while` 會把整個 test run 吊死。** 爬蟲的取消測試原本寫
+    `while (requests.length < 1) await sleep(10)` 等第一個請求 —— 當路由因為別的 bug
+    回 404 時，那個迴圈永遠不會結束，而 `node --test` 的輸出被管線緩衝住，
+    看起來像「測試整個沒反應」而不是「有一條測試失敗」。等待迴圈一律要有 deadline。
+39. **新的子 router 要一路轉下去才會生效。** `createTranslateApiRouter` 掛在
+    `admin-api.js`，但 `admin-page.js` 的 `createAdminRouter` 沒把 `crawler` 往下傳 →
+    `if (translation && crawler)` 不成立 → **所有 `/crawl` 端點靜默 404**。
+    加新依賴時 `app.js` → `admin-page.js` → `admin-api.js` 三層都要改。
+
 ---
 
 ## 改動時的注意事項
@@ -392,3 +500,40 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
 - **覆蓋率門檻 80%，目前 97%。** 新程式碼請一起把測試補上。
 - **不要留 `console.log`。** 要 log 就用 `src/logger.js`（`logger.info/warn/error`）。
   `src/public/*.js` 是瀏覽器端的後台 UI，那裡也不要留 debug log。
+
+---
+
+## 翻譯層的設計決策（v4，以及為什麼）
+
+- **`translateHtml()` 是同步的，而且刻意沒有 async 版本。** 只要它能 await，
+  就一定有人會在請求路徑上等 ollama —— 那是 18 秒的首次載入，而不是零閃爍。
+  請求路徑只做一次批次 SQLite 查詢；沒命中就保留原文、丟進背景佇列。
+  **使用者第一次看到部分英文是預期行為，不是 bug。**
+- **只有明確宣告 UTF-8 的文件才翻**（`translate/charset.js`）。
+  HTML 改寫全程走 latin1（byte-lossless），v1~v3 從來不用管 charset，因為插進去的
+  東西全是 ASCII。**翻譯會插入中文**，而中文的 byte 表示法跟頁面宣告的編碼綁在一起：
+  把 UTF-8 的 byte 插進一份宣告 Big5 的頁面，使用者看到的是亂碼。沒宣告的也不翻
+  （瀏覽器會自己猜）。**規格沒提這件事，這是實作時補上的安全邊界。**
+- **請求模型回「索引當 key 的 object」，不是陣列。** 規格 §1 的實測：要陣列時
+  模型會回 object 而且**整批錯位**（第一段的譯文被拿去當 key）。
+  **錯位比翻錯危險得多** —— 每一段看起來都有翻，不會有人發現，而且會進永久快取。
+- **對齊防呆：任何一條不符就整批丟棄。** 是 object、key 剛好 `"0"`..`"n-1"`、
+  每個 value 是非空字串。這段有退化驗證（把檢查拿掉，24 條裡有 9 條變紅）。
+- **hash 用長度前綴，不是規格寫的換行分隔。** 規格的
+  `sha256(原文 + '\n' + lang + '\n' + model)` 會讓 `('a','b\nzh')` 與 `('a\nb','zh')`
+  撞成同一個 hash ＝某一段拿到另一段的譯文。實務上撞不到（原文的換行已經被
+  `normalizeSpace` 壓掉），但擋掉它的成本是三個數字。
+- **ollama 的呼叫不走 SSRF 防護。** 那是**伺服器自己發起**的呼叫，不是使用者腳本
+  發起的。**不要**為了翻譯去打開 `LOCALMONKEY_ALLOW_PRIVATE`（那是代理目標的全域
+  開關，打開等於讓所有被代理的站都能指向內網），也跟 `LOCALMONKEY_GM_ALLOW_HOSTS` 無關。
+- **切段器保證 `html.slice(start, end) === raw`。** 回填直接拿座標切字串，所以座標
+  是契約。有一條測試專門釘這件事 —— 座標錯掉的症狀是版面爆開，而 curl 看起來
+  「有翻譯」。
+- **SQL 在 `db/translations.js`，不在 `translate/cache.js`。** 規格 §4 把 cache 列在
+  `src/translate/` 底下，但這個專案所有資料表的讀寫都在 `src/db/`，翻譯沒有理由當例外。
+  `translate/cache.js` 留著當對外介面（hash + resolve），責任跟規格寫的一致。
+- **爬蟲的禮貌間隔只准往上調。** `LOCALMONKEY_CRAWL_POLITENESS_MS` 的下限就是預設值
+  500ms —— 這是在打**別人的**伺服器，往下調就是把功能變成壓測工具。
+- **翻完才改 `<html lang>`。** 一份還是英文的頁面不該宣告自己是中文。
+  （為什麼要改：`lang` 決定瀏覽器挑哪套 CJK 字體，`lang="en"` 的中文頁面常常被畫成
+  日文字形。這是驗收時在真瀏覽器上看到的，規格沒提。）

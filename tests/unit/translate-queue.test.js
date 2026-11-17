@@ -274,6 +274,82 @@ test('重試成功後那段就離開佇列了', async (t) => {
   assert.equal(store.translations.count().total, 1);
 });
 
+test('⛔ 一批失敗不會把整條佇列卡死（剩下的要繼續翻）', async (t) => {
+  const store = storeWith(t);
+
+  // 第一批炸掉、之後都正常 —— 真實情形是 ollama 冷啟動那一下逾時
+  let calls = 0;
+  const batches = [];
+  const client = {
+    model: MODEL,
+    batchSize: 2,
+    batches,
+    async translateBatch(texts) {
+      calls += 1;
+      batches.push([...texts]);
+      if (calls === 1) throw new OllamaError('第一批逾時');
+      return texts.map((text) => `[${text}]`);
+    },
+  };
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one', 'Bravo two', 'Charlie three', 'Delta four'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  const result = await queueWith(store, client, { batchSize: 2 }).drain();
+
+  // 失敗的那兩段留著等下一輪，另外兩段**這一輪就要翻好**
+  assert.equal(result.translated, 2, '第一批失敗之後就不做事了＝整站卡住');
+  assert.equal(result.failed, 2);
+  assert.equal(store.translations.count().total, 2);
+  assert.equal(store.translateQueue.stats().pending, 2);
+});
+
+test('⛔ 同一輪裡不會重複拿到剛失敗的那批（不然會原地打轉）', async (t) => {
+  const store = storeWith(t);
+  const client = fakeClient({ fail: new OllamaError('全部都炸') });
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one', 'Bravo two', 'Charlie three', 'Delta four'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  const result = await queueWith(store, client, { batchSize: 2 }).drain();
+
+  // 四段、每批兩段 → 剛好兩批，不多不少
+  assert.equal(client.batches.length, 2);
+  assert.equal(result.failed, 4);
+  assert.deepEqual(
+    store.translateQueue.claim({ limit: 10 }).map((row) => row.attempts),
+    [1, 1, 1, 1],
+    '每一段只該被算一次失敗',
+  );
+});
+
+test('claim 的 exclude：排除指定的 hash（佇列跳過剛失敗的那批靠它）', (t) => {
+  const store = storeWith(t);
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one', 'Bravo two'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  const all = store.translateQueue.claim({ limit: 10 });
+  assert.equal(all.length, 2);
+
+  const rest = store.translateQueue.claim({ limit: 10, exclude: [all[0].hash] });
+  assert.deepEqual(rest.map((row) => row.hash), [all[1].hash]);
+
+  assert.equal(store.translateQueue.claim({ limit: 10, exclude: all.map((r) => r.hash) }).length, 0);
+});
+
 /* ---------------------------- 併發與收尾 ---------------------------- */
 
 test('⛔ 序列化：同時 kick 兩次只會有一條在跑（ollama 本來就不併行）', async (t) => {

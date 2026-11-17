@@ -153,7 +153,17 @@ function createOllamaClient({
       );
     } catch (cause) {
       if (cause instanceof OllamaError) throw cause;
-      throw new OllamaError(`連不到 ollama（${root}）：${cause.message}`, { cause });
+
+      // ⛔ 逾時不是「連不上」。兩者的處理方式完全不同（一個是把 ollama 叫起來，
+      //    一個是模型太慢 / 批次太大），訊息混在一起會讓人往錯的方向查 ——
+      //    實測踩過：log 寫「連不到 ollama」，但 ollama 其實好好的，只是冷啟動慢。
+      const timedOut = cause?.name === 'TimeoutError' || /abort|timeout/i.test(cause?.message ?? '');
+      throw new OllamaError(
+        timedOut
+          ? `ollama 超過 ${timeoutMs}ms 還沒回應（${pathname}）—— 模型可能正在冷啟動，或這一批太大`
+          : `連不到 ollama（${root}）：${cause.message}`,
+        { cause },
+      );
     }
 
     if (!response.ok) {

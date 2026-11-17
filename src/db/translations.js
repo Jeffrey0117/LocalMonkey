@@ -267,16 +267,26 @@ function enqueueSegments(db, { texts, targetLang, model, siteId = null }) {
   return apply();
 }
 
-/** 拿一批還有重試額度的段（最舊的先） */
-function claimQueue(db, { limit = 20, maxAttempts = 3 } = {}) {
+/**
+ * 拿一批還有重試額度的段（最舊的先）。
+ *
+ * `exclude` 是「這一輪已經試過的」—— 佇列跑一輪時，失敗的那批必須被跳過，
+ * 否則下一次 claim 又拿到同一批（排序一樣），於是原地打轉。
+ * 沒有它的話一次逾時就會把整條佇列卡死（實測：85 段全部停在那裡不動）。
+ */
+function claimQueue(db, { limit = 20, maxAttempts = 3, exclude = [] } = {}) {
+  const placeholders = exclude.map(() => '?').join(', ');
+  const notIn = exclude.length > 0 ? `AND hash NOT IN (${placeholders})` : '';
+
   return db
     .prepare(
       `SELECT * FROM translate_queue
         WHERE attempts < ?
+        ${notIn}
         ORDER BY created_at, hash
         LIMIT ?`,
     )
-    .all(maxAttempts, limit);
+    .all(maxAttempts, ...exclude, limit);
 }
 
 function clearQueue(db, hashes) {

@@ -59,11 +59,23 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
     }
   }
 
+  /**
+   * 把佇列跑一輪。
+   *
+   * ⛔ 失敗的那批要記進 `tried` 並**繼續做下一批**，不能直接 break。
+   * 實測（2026-11-18，整站 85 段）：ollama 冷啟動那一下逾時之後，舊的寫法
+   * 直接跳出迴圈 → 85 段全部停在原地，控制台上「待翻 85」再也不會動，
+   * 而且沒有任何錯誤訊息會再出現。一次暫時性的逾時不該讓整站停擺。
+   *
+   * `tried` 也擋掉「原地打轉」：claim 的排序固定，不排除剛失敗的那批就會
+   * 一直拿到同一批。
+   */
   async function loop() {
     const totals = { batches: 0, translated: 0, failed: 0 };
+    let tried = [];
 
     while (!stopped) {
-      const rows = store.translateQueue.claim({ limit: batchSize, maxAttempts });
+      const rows = store.translateQueue.claim({ limit: batchSize, maxAttempts, exclude: tried });
       if (rows.length === 0) break;
 
       const result = await runBatch(rows);
@@ -72,12 +84,7 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
       totals.translated += result.translated;
       totals.failed += result.failed;
 
-      // 整批失敗又沒有別的段可做時直接收手：這一輪已經把額度用掉了，
-      // 繼續跑只會對著同一批失敗的段打轉（attempts 很快就滿，但中間會空轉）
-      if (result.failed > 0 && result.failed === rows.length) {
-        const next = store.translateQueue.claim({ limit: batchSize, maxAttempts });
-        if (next.length === 0 || next[0].hash === rows[0].hash) break;
-      }
+      if (result.failed > 0) tried = [...tried, ...rows.map((row) => row.hash)];
     }
 
     return totals;

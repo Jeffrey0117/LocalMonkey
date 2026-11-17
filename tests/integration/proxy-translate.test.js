@@ -138,6 +138,18 @@ test('第二次載入（佇列翻完後）→ 整頁都是譯文', async (t) => 
   assert.ok(text.includes('譯:Office photo'), 'alt 沒翻');
 });
 
+test('⛔ 翻完之後 <html lang> 跟著改（不然瀏覽器用日文字形畫中文）', async (t) => {
+  const { app, fetchPage } = await scenario(t);
+
+  const before = await fetchPage();
+  assert.ok(before.text.includes('<html lang="en">'), '還沒翻的時候不要動它');
+
+  await app.translation.queue.idle();
+  const { text } = await fetchPage();
+
+  assert.ok(text.includes('<html lang="zh-TW">'), `lang 沒跟著改：${text.slice(0, 200)}`);
+});
+
 test('⛔ 回填保留前後空白（版面靠它）', async (t) => {
   const { app, fetchPage } = await scenario(t);
 

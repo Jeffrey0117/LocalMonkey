@@ -24,6 +24,7 @@ const { createTranslationQueue } = require('./queue.js');
 const { collectSegments, renderTranslated, uniqueTexts } = require('./pipeline.js');
 const { resolveTexts } = require('./cache.js');
 const { isUtf8Document } = require('./charset.js');
+const { rewriteHtmlLang } = require('./html-lang.js');
 const { fromLatin1, toLatin1 } = require('./bytes.js');
 const { DEFAULT_GLOSSARY } = require('./glossary.js');
 const { DEFAULT_LANG } = require('./prompt.js');
@@ -112,7 +113,12 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
         queue.kick();
       }
 
-      return renderTranslated(html, items, resolve, { encode: toLatin1 }).html;
+      const rendered = renderTranslated(html, items, resolve, { encode: toLatin1 });
+
+      // 真的翻了東西才改 `<html lang>`：一份還是英文的頁面不該宣告自己是中文
+      return rendered.applied > 0
+        ? rewriteHtmlLang(rendered.html, active.targetLang)
+        : rendered.html;
     } catch (error) {
       logger.error(`翻譯 ${site.id} 的 HTML 時出錯，已退回原文`, error);
       return html;

@@ -194,7 +194,26 @@ test('⛔ ollama 連不上 → OllamaError（代理不准因此掛掉）', async
   });
   const client = clientWith(impl);
 
-  await assert.rejects(() => client.translateBatch(['Hello'], { targetLang: 'zh-TW' }), OllamaError);
+  await assert.rejects(
+    () => client.translateBatch(['Hello'], { targetLang: 'zh-TW' }),
+    (error) => error instanceof OllamaError && /連不到/.test(error.message),
+  );
+});
+
+test('⛔ 逾時的訊息不准寫成「連不上」（會害人往錯的方向查）', async () => {
+  // 實測踩過（2026-11-18）：ollama 好好的、只是冷啟動慢，但 log 寫「連不到 ollama」
+  const { impl } = fakeFetch(() => {
+    throw Object.assign(new Error('The operation was aborted due to timeout'), {
+      name: 'TimeoutError',
+    });
+  });
+  const client = clientWith(impl);
+
+  await assert.rejects(
+    () => client.translateBatch(['Hello'], { targetLang: 'zh-TW' }),
+    (error) =>
+      error instanceof OllamaError && /沒回應/.test(error.message) && !/連不到/.test(error.message),
+  );
 });
 
 test('⛔ HTTP 不是 2xx → OllamaError，訊息帶狀態碼', async () => {

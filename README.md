@@ -24,6 +24,9 @@ http://你的機器:30600/p/ptt/        ← 打開這個網址就是改造後的
 - **直接吃 Tampermonkey 腳本。** 把 `.user.js` 丟進控制台，它自己讀 header 判斷
   要配哪些網域、自己建站、自己掛上去。`@match`、`@grant`、`@run-at`、`@require`
   都看得懂。
+- **把整個網站翻成中文（v4）。** 用你本機的 ollama 在 HTML 出門前就翻好 ——
+  不用 API key、不用錢、**內容不會送出去**，而且翻一次永久有效。
+  [往下看](#把網站翻成中文v4)。
 
 ```
 ┌─ LocalMonkey ─────────────── [腳本] [網站] ───────── + 丟腳本 ─┐
@@ -491,6 +494,59 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 
 ---
 
+## 把網站翻成中文（v4）
+
+代理在 HTML **出門前**就把文字翻好，所以送到瀏覽器的 HTML 本來就是中文的 ——
+不會英文先閃一下再被換掉（這是在伺服器端做、而不是注入 JS 用 TreeWalker 的理由）。
+
+翻譯用的是**你自己機器上的 ollama**：不用 API key、不用付錢、**內容不會離開這台機器**。
+
+```
+          第一次打開                        翻完之後重新載入
+┌──────────────────────────┐      ┌──────────────────────────┐
+│  620+ Free HTML CSS …    │      │  620 個以上免費 HTML CSS … │
+│  Read More    Contact    │  →   │  閱讀更多      聯絡我們    │
+│  （背景正在翻）            │      │  （快取命中，永久有效）     │
+└──────────────────────────┘      └──────────────────────────┘
+```
+
+### 怎麼開
+
+1. 裝 [ollama](https://ollama.com) 並拉一個模型：`ollama pull qwen2.5`
+2. 控制台 →「網站」分頁 → 那一站的「設定」→ 打開**翻譯**開關
+3. 開一次那個站的頁面。第一次會看到部分英文（背景正在翻），**翻完重新載入就是中文**
+4. 不想等？同一個地方按「**預先翻譯整站**」，它會自己爬過去把每一頁都翻好
+
+### 幾個重點
+
+- **快取是主幹，不是優化。** 靜態內容不常變，所以翻一次就永久有效 ——
+  同一段文字在第二頁、第二天、第二個瀏覽器都直接命中，不會再叫模型。
+- **請求路徑絕不等模型。** 代理只查一次 SQLite；沒翻過的段**保留原文**並丟進背景佇列。
+  第一次看到部分英文是**預期行為**。
+- **ollama 沒開也不會壞。** 連不上時代理照常回原文，錯誤記在控制台的「翻譯」分頁。
+- **人工改過的永遠贏。** 在「翻譯」分頁直接改譯文，存檔後背景翻譯不會再蓋掉它
+  （換模型也還在）。
+- **術語不翻。** 每個站有自己的術語表（預設帶 `HTML`/`CSS`/`Bootstrap`/`React`/`API` 之類），
+  整段剛好是術語就跳過，句子裡出現就告訴模型保留。
+- **不翻的東西**：`<script>` / `<style>` / `<pre>` / `<code>` / `<textarea>` / `<svg>` 的內容、
+  註解、純數字、網址、email、已經是中日韓文的段。
+  `href` / `src` / `class` / `id` / `data-*` **一律不碰**；會翻的屬性只有
+  `alt` / `title` / `placeholder` / `aria-label`，加上 `<title>` 與 `<meta name="description">`。
+- **只翻明確宣告 UTF-8 的頁面。** 代理的 HTML 改寫是 byte-level 的，把 UTF-8 的中文
+  插進一份宣告 Big5 的頁面會變成整頁亂碼 —— 所以沒宣告 UTF-8 的頁面原樣送出。
+- **預先翻譯整站會去打原站**，所以同時只打 1 個請求、每個請求之間至少 500ms。
+  已經翻過的段會跳過，重跑很便宜。
+
+### 速度（2026-11-18 在一台沒有獨顯的 Windows 上實測，`qwen2.5:latest` 7.6B Q4_K_M）
+
+| | |
+|---|---|
+| 模型冷啟動（載 4.7GB） | 約 45 秒，只有第一次 |
+| 熱的時候 | 約 **144 ms / 段** |
+| templatemo 首頁整頁（85 段、4046 字元） | **約 17 秒**（之後永遠是 0 秒） |
+
+---
+
 ## 設定
 
 | 環境變數 | 預設 | 說明 |
@@ -510,6 +566,17 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 | `LOCALMONKEY_GM_XHR_MAX_REQUEST_BYTES` | `1048576` | 單次呼叫可以帶的 body 上限 |
 | `LOCALMONKEY_GM_XHR_RATE` / `_WINDOW_MS` | `60` / `60000` | 每個網站的速率限制 |
 | `LOCALMONKEY_GM_ALLOW_HOSTS` | *(空)* | 允許 `GM_xmlhttpRequest` 打的本機 `host:port`（精確比對，見上方說明） |
+| `LOCALMONKEY_OLLAMA_URL` | `http://127.0.0.1:11434` | 翻譯用的 ollama 位址 |
+| `LOCALMONKEY_TRANSLATE_MODEL` | `qwen2.5:latest` | 預設模型（每個站可以各自指定） |
+| `LOCALMONKEY_TRANSLATE_BATCH` | `20` | 一次送幾段給模型 |
+| `LOCALMONKEY_TRANSLATE_KEEPALIVE` | `30m` | 叫 ollama 把模型留在記憶體多久（太短就會一直吃冷啟動） |
+| `LOCALMONKEY_TRANSLATE_TIMEOUT_MS` | `120000` | 每一批的逾時 |
+| `LOCALMONKEY_CRAWL_POLITENESS_MS` | `500` | 預先翻譯整站時每個請求之間的間隔（**只准往上調**） |
+
+⚠️ **翻譯的呼叫不受 `LOCALMONKEY_ALLOW_PRIVATE` 影響，也不要為了它去打開那個開關。**
+ollama 在 localhost，但那是**伺服器自己發起**的呼叫，走獨立路徑；
+`LOCALMONKEY_ALLOW_PRIVATE` 是「可以代理的目標」的全域開關，打開等於讓所有被代理的
+網站都能指向你的內網。
 
 完整說明見 [`.env.example`](.env.example)。把它複製成 `.env` 就會生效（`npm start` 走 Node 內建的 `--env-file-if-exists`，不需要 dotenv，零依賴沒被打破）。真實環境變數優先於 `.env` 裡的值。
 
@@ -599,11 +666,11 @@ GM shim 則是放進自己寫的假 DOM（`tests/support/dom.js`）**真的執�
 最近一次執行：
 
 ```
-ℹ tests 673
-ℹ pass 673
+ℹ tests 1014
+ℹ pass 1014
 ℹ fail 0
 
-ℹ all files         |  97.53 |    90.44 |   97.93 |
+ℹ all files         |  98.12 |    90.46 |   98.04 |
 ```
 
 （line % / branch % / funcs %）
