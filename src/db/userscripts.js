@@ -10,6 +10,7 @@
 
 const { NotFoundError } = require('./errors.js');
 const { newId, nowIso } = require('../lib/ids.js');
+const { scriptFeatures } = require('../lib/script-features.js');
 const { newDeliveryToken } = require('../services/delivery.js');
 
 const UPDATABLE_COLUMNS = Object.freeze([
@@ -211,11 +212,17 @@ function setBindings(db, scriptId, bindings) {
   return listBindings(db, scriptId);
 }
 
-/** 列表刻意不帶 source（可能 1MB），但帶 metadata 與掛在哪些站，後台列表就夠畫了 */
+/**
+ * 列表刻意不帶 source（可能 1MB），但帶 metadata 與掛在哪些站，後台列表就夠畫了。
+ *
+ * ⛔ 大小用 `LENGTH(CAST(source AS BLOB))`：SQLite 的 `LENGTH()` 對 TEXT 回的是
+ * **字元數**，中文註解的腳本會被短報三倍。儀表板顯示的是檔案大小，要 byte。
+ */
 function listUserscripts(db) {
   const scripts = db
     .prepare(
-      `SELECT id, name, version, description, metadata, run_at, enabled, order_index, created_at, updated_at
+      `SELECT id, name, version, description, metadata, run_at, enabled, order_index,
+              delivery_token, LENGTH(CAST(source AS BLOB)) AS size_bytes, created_at, updated_at
          FROM scripts
         ORDER BY order_index, created_at, id`,
     )
@@ -231,19 +238,31 @@ function listUserscripts(db) {
         : acc.set(row.script_id, [...current, row.site_id]);
     }, new Map());
 
-  return scripts.map((row) => ({
-    id: row.id,
-    name: row.name,
-    version: row.version,
-    description: row.description,
-    metadata: parseMetadata(row.metadata),
-    run_at: row.run_at,
-    enabled: row.enabled === 1,
-    order_index: row.order_index,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    site_ids: bindings.get(row.id) ?? [],
-  }));
+  return scripts.map((row) => {
+    const metadata = parseMetadata(row.metadata);
+    const siteIds = bindings.get(row.id) ?? [];
+
+    return {
+      id: row.id,
+      name: row.name,
+      version: row.version,
+      description: row.description,
+      metadata,
+      run_at: row.run_at,
+      enabled: row.enabled === 1,
+      order_index: row.order_index,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      site_ids: siteIds,
+
+      // 儀表板欄位（SPEC-dashboard §2）。camelCase 的是新的，snake_case 的是
+      // v2 既有的契約 —— 兩個都留著，不要為了「整理」而拔掉舊名字。
+      size: row.size_bytes ?? 0,
+      updatedAt: row.updated_at,
+      siteIds,
+      featureFlags: scriptFeatures({ metadata, deliveryToken: row.delivery_token }),
+    };
+  });
 }
 
 /**
