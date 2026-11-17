@@ -32,6 +32,14 @@ async function startApp(options = {}) {
       allowHosts: [],
       ...options.config?.gmXhr,
     },
+    translate: {
+      ollamaUrl: 'http://127.0.0.1:11434',
+      model: 'qwen2.5:latest',
+      batchSize: 20,
+      keepAlive: '30m',
+      timeoutMs: 5_000,
+      ...options.config?.translate,
+    },
   };
 
   const app = createApp({
@@ -40,6 +48,9 @@ async function startApp(options = {}) {
     adminToken: options.adminToken ?? TEST_ADMIN_TOKEN,
     logger: options.logger ?? silentLogger,
     fetchImpl: options.fetchImpl,
+    // 沒注入的話翻譯層會拿真的 ollama client —— 但每個站預設 translate_enabled=0，
+    // 所以除了明確打開的測試之外不會有人去碰它
+    translationClient: options.translationClient,
   });
 
   const server = await new Promise((resolve, reject) => {
@@ -55,7 +66,13 @@ async function startApp(options = {}) {
     port,
     base: `http://127.0.0.1:${port}`,
     adminToken: options.adminToken ?? TEST_ADMIN_TOKEN,
-    close: () => new Promise((done) => server.close(done)),
+    // 翻譯的整合測試要能等背景佇列跑完（queue.idle()）
+    translation: app.locals.translation,
+    close: async () => {
+      app.locals.translation.queue.stop();
+      await app.locals.translation.queue.idle();
+      await new Promise((done) => server.close(done));
+    },
   };
 }
 

@@ -8,6 +8,7 @@ const { createDeliveryRouter } = require('./routes/delivery.js');
 const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
 const { createFaviconService } = require('./services/favicon.js');
+const { createTranslationService } = require('./translate/service.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
 
@@ -21,9 +22,17 @@ const { silentLogger } = require('./logger.js');
  *   adminToken: string,
  *   logger?: object,
  *   fetchImpl?: typeof fetch,
+ *   translationClient?: object,
  * }} input
  */
-function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl }) {
+function createApp({
+  store,
+  config,
+  adminToken,
+  logger = silentLogger,
+  fetchImpl,
+  translationClient,
+}) {
   if (typeof adminToken !== 'string' || adminToken.length === 0) {
     throw new Error('createApp 需要 adminToken（沒有預設值，也不准不驗證）');
   }
@@ -32,11 +41,26 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
   app.disable('x-powered-by');
   app.disable('etag'); // 回應是我們改寫過的，不要讓 express 自己算 etag
 
+  /**
+   * 翻譯層（v4）。背景佇列的狀態掛在這個 instance 上，所以要跟 app 同壽命。
+   * `translationClient` 是測試注入假 ollama 的接縫 —— 掛上 `app.locals`
+   * 讓整合測試能 `await app.locals.translation.queue.idle()`。
+   */
+  const translation = createTranslationService({
+    store,
+    config,
+    logger,
+    fetchImpl,
+    client: translationClient,
+  });
+  app.locals.translation = translation;
+
   const { handleProxyRoute, handleFallbackRoute } = createProxyHandlers({
     store,
     config,
     logger,
     fetchImpl,
+    translation,
   });
 
   // 保留路徑：不進代理。
@@ -46,7 +70,10 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
 
   app.use('/__lm/gm', createGmXhrRouter({ store, config, logger, fetchImpl }));
   app.use('/__lm', createInternalRouter({ store, favicons }));
-  app.use('/admin', createAdminRouter({ store, config, adminToken, logger, fetchImpl }));
+  app.use(
+    '/admin',
+    createAdminRouter({ store, config, adminToken, logger, fetchImpl, translation }),
+  );
 
   // 投遞給 Tampermonkey。免認證（憑證是路徑裡的 token），要排在代理的 catch-all 之前。
   app.use('/s', createDeliveryRouter({ store, config, logger }));

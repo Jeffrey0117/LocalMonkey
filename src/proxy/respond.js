@@ -35,15 +35,25 @@ function selectScripts(store, site, pathname) {
  *
  * 改寫要吃 `target_origin`（不只 siteId）—— `<base href>` 與 meta refresh
  * 的值可能是絕對網址，得先判斷它指的是不是這個站。
+ *
+ * **順序是規格的一部分**：
+ *   1. 網址改寫（`lib/html.js`）
+ *   2. 翻譯回填（v4）—— 要在網址改寫**之後**：切段器算的是座標，
+ *      任何之後發生的字串改動都會讓那些座標失效
+ *   3. 腳本注入 —— 只在頭尾加 tag，不影響前面兩步
+ *
+ * 翻譯層同步、只查 SQLite；壞掉就回原字串（見 translate/service.js）。
  */
-function transformHtml(buffer, { site, scripts }) {
+function transformHtml(buffer, { site, scripts, translate, contentType }) {
   const source = buffer.toString('latin1');
   const rewritten = rewriteDocumentUrls(source, {
     siteId: site.id,
     targetOrigin: site.target_origin,
   });
 
-  return Buffer.from(injectScripts(rewritten, scripts), 'latin1');
+  const translated = translate ? translate(rewritten, { site, contentType }) : rewritten;
+
+  return Buffer.from(injectScripts(translated, scripts), 'latin1');
 }
 
 /**
@@ -67,10 +77,18 @@ function copyHeaders(res, response, site, { html }) {
 
 /**
  * @param {import('express').Response} res
- * @param {{ site: object, response: Response, buffer: Buffer, pathWithQuery: string, store: object }} input
+ * @param {{
+ *   site: object,
+ *   response: Response,
+ *   buffer: Buffer,
+ *   pathWithQuery: string,
+ *   store: object,
+ *   translate?: (html: string, context: object) => string,
+ * }} input
  */
-function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store }) {
-  const html = isHtmlResponse(response.headers.get('content-type'));
+function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store, translate }) {
+  const contentType = response.headers.get('content-type');
+  const html = isHtmlResponse(contentType);
   const hasBody = !BODYLESS_STATUSES.has(response.status) && buffer.length > 0;
 
   copyHeaders(res, response, site, { html });
@@ -88,7 +106,7 @@ function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store
   }
 
   const scripts = selectScripts(store, site, pathnameOf(pathWithQuery));
-  res.end(transformHtml(buffer, { site, scripts }));
+  res.end(transformHtml(buffer, { site, scripts, translate, contentType }));
 }
 
 module.exports = { sendProxiedResponse, selectScripts, transformHtml, isHtmlResponse, pathnameOf };

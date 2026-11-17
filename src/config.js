@@ -18,6 +18,13 @@ const DEFAULTS = Object.freeze({
   deliveryRateWindowMs: 60_000,
   assetTimeoutMs: 15_000,
   assetMaxBytes: 5 * 1024 * 1024,
+
+  // 伺服器端翻譯層（SPEC-translate §8）
+  ollamaUrl: 'http://127.0.0.1:11434',
+  translateModel: 'qwen2.5:latest',
+  translateBatch: 20,
+  translateKeepAlive: '30m',
+  translateTimeoutMs: 120_000,
 });
 
 function parseInteger(raw, fallback, { min, max }) {
@@ -108,6 +115,29 @@ function loadConfig(env = process.env) {
 
       // 預設空的。只影響 GM_xmlhttpRequest，不影響代理目標（見 lib/gm-allow-hosts.js）
       allowHosts: parseAllowHosts(env.LOCALMONKEY_GM_ALLOW_HOSTS),
+    },
+
+    /**
+     * 伺服器端翻譯層（SPEC-translate §8）。
+     *
+     * ⛔ ollama 在 localhost，所以這些呼叫會撞到 SSRF 防護的那條規則 ——
+     * **不要**因此打開 `LOCALMONKEY_ALLOW_PRIVATE`（那是代理目標的全域開關，
+     * 打開等於讓所有被代理的站都能指向內網）。翻譯是**伺服器自己發起**的
+     * 呼叫，走獨立路徑、獨立設定，跟 `LOCALMONKEY_GM_ALLOW_HOSTS` 也無關。
+     */
+    translate: {
+      ollamaUrl: parseToken(env.LOCALMONKEY_OLLAMA_URL) ?? DEFAULTS.ollamaUrl,
+      model: parseToken(env.LOCALMONKEY_TRANSLATE_MODEL) ?? DEFAULTS.translateModel,
+      batchSize: parseInteger(env.LOCALMONKEY_TRANSLATE_BATCH, DEFAULTS.translateBatch, {
+        min: 1,
+        max: 200,
+      }),
+      keepAlive: parseToken(env.LOCALMONKEY_TRANSLATE_KEEPALIVE) ?? DEFAULTS.translateKeepAlive,
+      timeoutMs: parseInteger(
+        env.LOCALMONKEY_TRANSLATE_TIMEOUT_MS,
+        DEFAULTS.translateTimeoutMs,
+        { min: 1_000, max: 1_800_000 },
+      ),
     },
   };
 }
