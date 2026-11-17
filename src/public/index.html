@@ -15,10 +15,11 @@
       <nav class="tabs" id="tabs">
         <button type="button" class="tab is-active" data-tab="scripts">已安裝的腳本</button>
         <button type="button" class="tab" data-tab="sites">網站</button>
+        <button type="button" class="tab" data-tab="translate">翻譯</button>
         <button type="button" class="tab" data-tab="settings">設定</button>
       </nav>
 
-      <span class="version-tag">v2</span>
+      <span class="version-tag">v4</span>
       <button type="button" class="primary" id="drop-open">+ 丟腳本</button>
     </header>
 
@@ -118,6 +119,7 @@
                 <th>代理網址</th>
                 <th>目標主機</th>
                 <th>掛著的腳本</th>
+                <th>翻譯</th>
                 <th>啟用</th>
               </tr>
             </thead>
@@ -125,6 +127,57 @@
           </table>
         </div>
         <p class="placeholder" id="site-list-empty">還沒有網站。丟一支帶 <code>@match</code> 的腳本就會自動建。</p>
+      </section>
+
+      <!-- ───────────────────────────── 翻譯 ───────────────────────────── -->
+      <section class="panel translate-panel" id="tab-translate" hidden>
+        <p class="hint">
+          代理在 HTML 出門前用本機的 ollama 把文字翻成中文，<strong>翻一次就永久有效</strong>。
+          第一次開某一頁會看到部分英文（背景正在翻），翻完之後重新載入就是中文。
+          要整站一次翻好，去「網站」分頁按「預先翻譯整站」。
+        </p>
+
+        <div class="translate-status" id="translate-status"></div>
+
+        <div class="translate-toolbar">
+          <input
+            type="search"
+            id="translate-search"
+            class="origin-input translate-search"
+            placeholder="搜尋原文或譯文…"
+            spellcheck="false"
+          />
+          <label class="switch">
+            <input type="checkbox" id="translate-only-manual" />
+            <span>只看人工覆寫</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="translate-only-failed" />
+            <span>只看翻不動的</span>
+          </label>
+          <button type="button" class="ghost" id="translate-run">現在就翻</button>
+          <button type="button" class="ghost" id="translate-refresh">重新整理</button>
+        </div>
+
+        <div class="table-scroll">
+          <table class="translations">
+            <thead>
+              <tr>
+                <th class="col-source">原文</th>
+                <th class="col-target">譯文</th>
+                <th class="col-origin">來源</th>
+                <th class="col-lang">語言 / 模型</th>
+                <th class="col-updated">更新時間</th>
+                <th class="col-actions">動作</th>
+              </tr>
+            </thead>
+            <tbody id="translate-rows"></tbody>
+          </table>
+        </div>
+
+        <p class="placeholder" id="translate-list-empty">
+          還沒有任何翻譯。到「網站」分頁把某個站的翻譯打開，然後開一次那個站的頁面。
+        </p>
       </section>
 
       <!-- ───────────────────────────── 設定 ───────────────────────────── -->
@@ -197,7 +250,9 @@
     <script src="/admin/editor.js"></script>
     <script src="/admin/scripts-table.js"></script>
     <script src="/admin/scripts-tab.js"></script>
+    <script src="/admin/site-translate.js"></script>
     <script src="/admin/sites-tab.js"></script>
+    <script src="/admin/translate-tab.js"></script>
     <script src="/admin/settings-tab.js"></script>
     <script src="/admin/drop-script.js"></script>
     <script src="/admin/app.js"></script>

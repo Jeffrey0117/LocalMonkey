@@ -148,6 +148,16 @@ function createAdminApiRouter({ store, config, logger, fetchImpl, translation, c
         dataDir: config.dataDir ?? null,
         databaseFile: config.databaseFile ?? null,
         adminTokenFile: config.dataDir ? path.join(config.dataDir, TOKEN_FILENAME) : null,
+
+        // v4：翻譯層的設定也是 env（同樣唯讀，同樣不回任何祕密）
+        translate: {
+          ollamaUrl: config.translate?.ollamaUrl ?? null,
+          model: config.translate?.model ?? null,
+          batchSize: config.translate?.batchSize ?? null,
+          keepAlive: config.translate?.keepAlive ?? null,
+          timeoutMs: config.translate?.timeoutMs ?? null,
+          crawlPolitenessMs: config.translate?.crawlPolitenessMs ?? null,
+        },
       },
     });
   });

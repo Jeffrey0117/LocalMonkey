@@ -68,5 +68,47 @@ window.LocalMonkeyApi = (function createApi() {
     listSites: () => request('GET', '/sites').then((data) => data.sites),
     updateSite: (siteId, patch) => request('PATCH', `/sites/${id(siteId)}`, patch).then((data) => data.site),
     deleteSite: (siteId) => request('DELETE', `/sites/${id(siteId)}`),
+
+    /* ---------------- v4：伺服器端翻譯層 ---------------- */
+
+    /** 佇列狀態 + ollama 活著沒 */
+    translateStatus: () => request('GET', '/translate/status'),
+
+    /** 模型下拉選單。ollama 掛了不丟錯，回 `{ models: [], ok: false, error }` */
+    translateModels: () => request('GET', '/translate/models'),
+
+    listTranslations: ({ query, origin, limit, offset } = {}) => {
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      if (origin) params.set('origin', origin);
+      if (limit) params.set('limit', String(limit));
+      if (offset) params.set('offset', String(offset));
+
+      const suffix = params.toString();
+      return request('GET', `/translate/entries${suffix ? `?${suffix}` : ''}`);
+    },
+
+    listFailedTranslations: () => request('GET', '/translate/failed').then((data) => data.failed),
+
+    /** 人工覆寫：存檔後 origin = 'manual'，背景翻譯之後不會覆蓋它 */
+    saveTranslation: (hash, translated) =>
+      request('PUT', `/translate/entries/${id(hash)}`, { translated }).then((data) => data.entry),
+
+    retranslate: (hash) => request('POST', `/translate/entries/${id(hash)}/retranslate`, {}),
+
+    /** 翻不動的段：放棄它（原文照舊顯示） */
+    dropFromQueue: (hash) => request('DELETE', `/translate/queue/${id(hash)}`),
+
+    runQueue: () => request('POST', '/translate/run', {}),
+
+    /* ---------------- 預先翻譯整站 ---------------- */
+
+    startCrawl: (siteId, options) =>
+      request('POST', `/sites/${id(siteId)}/crawl`, options ?? {}).then((data) => data.job),
+
+    listCrawlJobs: (siteId) => request('GET', `/sites/${id(siteId)}/crawl`).then((data) => data.jobs),
+
+    cancelCrawl: (siteId, jobId) =>
+      request('POST', `/sites/${id(siteId)}/crawl/${id(jobId)}/cancel`, {}).then((data) => data.job),
   };
 })();

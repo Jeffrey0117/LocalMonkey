@@ -913,3 +913,197 @@ tbody tr:last-child td {
   flex-wrap: wrap;
   margin: 0;
 }
+
+/* ------------------------------ 翻譯分頁（v4） ------------------------------ */
+
+.translate-panel {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* 狀態列：翻譯服務活著沒、快取幾段、待翻幾段 */
+.translate-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  font-size: 12px;
+}
+
+.translate-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.translate-search {
+  flex: 1 1 240px;
+  max-width: 420px;
+}
+
+/* 原文與譯文各佔一半，其餘欄位靠內容。長句子要換行而不是把表撐爆。 */
+.translations {
+  table-layout: fixed;
+}
+
+.translations .col-source,
+.translations .col-target {
+  width: 32%;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.translations .col-origin,
+.translations .col-lang {
+  width: 110px;
+}
+
+.translations .col-updated {
+  width: 140px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.translations .col-actions {
+  width: 130px;
+}
+
+.translations tr.is-failed .col-source {
+  color: var(--text-dim);
+}
+
+/* 譯文直接在表格裡改（點進去打字就是人工覆寫） */
+.translation-input {
+  width: 100%;
+  min-height: 30px;
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.translation-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* --------------------- 站台的翻譯設定（展開列） --------------------- */
+
+.translate-row > td {
+  background: var(--bg-raised);
+}
+
+.translate-settings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 4px 2px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* 術語表與按鈕列要橫跨整個 grid，不然會被擠成一條細欄 */
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.field select {
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.glossary-input {
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.translate-settings-actions {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.crawl-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.small-number {
+  width: 64px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+/* --------------------- 預先翻譯整站的進度 --------------------- */
+
+.crawl-progress {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.crawl-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.crawl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.crawl-numbers {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}

@@ -3,6 +3,7 @@
 const { openDatabase } = require('../../src/db/index.js');
 const { createStore } = require('../../src/db/store.js');
 const { createApp } = require('../../src/app.js');
+const { loadConfig } = require('../../src/config.js');
 const { silentLogger } = require('../../src/logger.js');
 
 const TEST_ADMIN_TOKEN = 'test-token-7f3a91c4d5e607182b3c4d5e6f708192';
@@ -32,11 +33,13 @@ async function startApp(options = {}) {
       allowHosts: [],
       ...options.config?.gmXhr,
     },
+    /**
+     * 翻譯層的預設直接取自真的 `loadConfig`，這樣測試用的 config 形狀
+     * 永遠跟正式環境一致（漏一個欄位就會變成「測試裡是 null、線上是數字」）。
+     * 只有逾時調短，不然一個壞掉的假 client 會讓測試等兩分鐘。
+     */
     translate: {
-      ollamaUrl: 'http://127.0.0.1:11434',
-      model: 'qwen2.5:latest',
-      batchSize: 20,
-      keepAlive: '30m',
+      ...loadConfig({}).translate,
       timeoutMs: 5_000,
       ...options.config?.translate,
     },

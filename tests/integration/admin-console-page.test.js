@@ -113,9 +113,34 @@ test('/admin 回控制台的骨架（分頁、丟腳本、編輯器容器）', a
     'data-tab="settings"',
     'id="tab-settings"',
     'id="settings-rows"',
+
+    // v4：翻譯分頁（SPEC-translate §7）
+    'data-tab="translate"',
+    'id="tab-translate"',
+    'id="translate-status"',
+    'id="translate-rows"',
+    'id="translate-search"',
+    'id="translate-only-manual"',
+    'id="translate-only-failed"',
+    'id="translate-run"',
+    'id="translate-list-empty"',
   ]) {
     assert.ok(response.text.includes(marker), `骨架少了 ${marker}`);
   }
+});
+
+test('v4：網站分頁的表頭有「翻譯」欄，而且展開列的 colspan 跟欄數一致', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const panel = /<section[^>]*id="tab-sites"[\s\S]*?<\/section>/.exec(html);
+
+  assert.ok(panel, '要有網站分頁');
+
+  const headers = [...panel[0].matchAll(/<th>([^<]*)<\/th>/g)].map((match) => match[1].trim());
+  assert.deepEqual(headers, ['網站', '代理網址', '目標主機', '掛著的腳本', '翻譯', '啟用']);
+
+  // ⛔ colspan 對不上的話展開列會把整張表撐歪（而且只有真瀏覽器看得出來）
+  const sitesTab = fs.readFileSync(path.join(PUBLIC_DIR, 'sites-tab.js'), 'utf8');
+  assert.match(sitesTab, new RegExp(`colspan="${headers.length}"`), '展開列的 colspan 要等於欄數');
 });
 
 test('⛔ 設定分頁是唯讀的：骨架裡不准有輸入框（那些是 env，改了要重啟）', () => {
@@ -136,9 +161,34 @@ test('設定分頁每一項都要附上對應的環境變數名稱', () => {
     'LOCALMONKEY_ADMIN_TOKEN',
     'LOCALMONKEY_ALLOW_PRIVATE',
     'LOCALMONKEY_GM_ALLOW_HOSTS',
+
+    // v4（SPEC-translate §8）
+    'LOCALMONKEY_OLLAMA_URL',
+    'LOCALMONKEY_TRANSLATE_MODEL',
+    'LOCALMONKEY_TRANSLATE_BATCH',
+    'LOCALMONKEY_TRANSLATE_KEEPALIVE',
+    'LOCALMONKEY_CRAWL_POLITENESS_MS',
   ]) {
     assert.ok(source.includes(name), `設定分頁少了 ${name}`);
   }
+});
+
+test('⛔ 翻譯分頁的版面：原文與譯文欄要能換行（長句子不准把表撐爆）', () => {
+  const fixed = ruleFor('.translations');
+  assert.match(fixed ?? '', /table-layout:\s*fixed/);
+
+  assert.match(
+    css(),
+    /\.translations \.col-source,\s*\n?\.translations \.col-target\s*\{[^}]*white-space:\s*normal/,
+    '原文 / 譯文欄要 white-space: normal',
+  );
+  assert.match(ruleFor('.translate-panel') ?? '', /overflow-y:\s*auto/, '分頁要能捲動');
+});
+
+test('⛔ 站台翻譯設定的 grid：術語表與按鈕列橫跨整列（不然被擠成細欄）', () => {
+  assert.match(ruleFor('.translate-settings') ?? '', /grid-template-columns:/);
+  assert.match(ruleFor('.field-wide') ?? '', /grid-column:\s*1 \/ -1/);
+  assert.match(ruleFor('.crawl-progress') ?? '', /grid-column:\s*1 \/ -1/);
 });
 
 test('後台的前端檔案一樣要 token（沒 token 連 JS 都拿不到）', async (t) => {

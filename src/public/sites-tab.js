@@ -9,6 +9,7 @@
 window.LocalMonkeySitesTab = (function createSitesTab() {
   const { escapeHtml, byId, banner, copyText, delegate } = window.LocalMonkeyUi;
   const api = window.LocalMonkeyApi;
+  const siteTranslate = window.LocalMonkeySiteTranslate;
 
   const state = { sites: [] };
 
@@ -58,18 +59,41 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
           </div>
         </td>
         <td>${scriptsCell(site)}</td>
+        <td>${siteTranslate.summary(site)}</td>
         <td>
           <label class="switch">
             <input type="checkbox" data-action="toggle" ${site.enabled ? 'checked' : ''} />
             <span>${site.enabled ? '啟用' : '停用'}</span>
           </label>
         </td>
+      </tr>
+      ${translateRow(site)}`;
+  }
+
+  /**
+   * 翻譯設定是「展開在下一列」而不是跳對話框：它有五個欄位 + 進度條，
+   * 塞進那一格會把整張表撐歪，而對話框會讓使用者看不到自己在設哪一站。
+   *
+   * `colspan` 要跟表頭的欄數一致（6 欄）。
+   */
+  function translateRow(site) {
+    const panel = siteTranslate.panel(site);
+    if (panel === '') return '';
+
+    return `
+      <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
+        <td colspan="6">${panel}</td>
       </tr>`;
   }
 
   function render() {
     byId('site-rows').innerHTML = state.sites.map((site) => row(site)).join('');
     byId('site-list-empty').hidden = state.sites.length > 0;
+  }
+
+  /** 進分頁時把正在跑的爬取工作接回來（重新載入後進度條不該消失） */
+  function hydrate() {
+    return siteTranslate.hydrate(state.sites).then(() => render());
   }
 
   async function refresh() {
@@ -79,6 +103,10 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
   function siteIdOf(element) {
     return element.closest('tr')?.dataset.siteId ?? null;
+  }
+
+  function siteOf(element) {
+    return state.sites.find((entry) => entry.id === siteIdOf(element)) ?? null;
   }
 
   async function withErrorBanner(action) {
@@ -92,6 +120,9 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
   function init() {
     const rows = byId('site-rows');
+
+    // 翻譯設定（展開列）自己掛一組事件委派，同一個容器
+    siteTranslate.init(rows, { siteOf: (element) => siteOf(element), onChanged: () => render() });
 
     delegate(rows, '[data-action="copy"]', 'click', (event, button) => {
       const site = state.sites.find((entry) => entry.id === siteIdOf(button));
@@ -127,5 +158,5 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
     return refresh();
   }
 
-  return { init, refresh };
+  return { init, refresh, hydrate };
 })();

@@ -5,10 +5,16 @@
   const { byId, banner } = window.LocalMonkeyUi;
   const scriptsTab = window.LocalMonkeyScriptsTab;
   const sitesTab = window.LocalMonkeySitesTab;
+  const translateTab = window.LocalMonkeyTranslateTab;
   const settingsTab = window.LocalMonkeySettingsTab;
   const dropScript = window.LocalMonkeyDropScript;
 
-  const PANELS = { scripts: 'tab-scripts', sites: 'tab-sites', settings: 'tab-settings' };
+  const PANELS = {
+    scripts: 'tab-scripts',
+    sites: 'tab-sites',
+    translate: 'tab-translate',
+    settings: 'tab-settings',
+  };
 
   function showTab(name) {
     for (const button of document.querySelectorAll('.tab')) {
@@ -20,7 +26,14 @@
     }
 
     // 切過去才抓資料：設定是唯讀快照，每次進來都該是最新的
-    if (name === 'sites') sitesTab.refresh().catch((error) => banner.error(error));
+    if (name === 'sites') {
+      sitesTab
+        .refresh()
+        // 爬取工作的進度在 DB 裡，所以切回來就能接上正在跑的那個
+        .then(() => sitesTab.hydrate())
+        .catch((error) => banner.error(error));
+    }
+    if (name === 'translate') translateTab.refresh().catch((error) => banner.error(error));
     if (name === 'settings') settingsTab.refresh().catch((error) => banner.error(error));
   }
 
@@ -49,6 +62,7 @@
       onSitesChanged: () => sitesTab.refresh().catch((error) => banner.error(error)),
     }),
     sitesTab.init(),
+    translateTab.init(),
     settingsTab.init(),
   ]).catch((error) => banner.error(error));
 })();

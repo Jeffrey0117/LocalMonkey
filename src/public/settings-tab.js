@@ -54,6 +54,44 @@ window.LocalMonkeySettingsTab = (function createSettingsTab() {
       mono: true,
       note: '只影響 GM_xmlhttpRequest，精確比對 host:port，而且 @connect 還是要過。',
     },
+
+    /* v4：伺服器端翻譯層（SPEC-translate §8） */
+    {
+      label: 'ollama 位址',
+      env: 'LOCALMONKEY_OLLAMA_URL',
+      value: (settings) => settings.translate?.ollamaUrl,
+      mono: true,
+      note: '伺服器自己發起的呼叫，不經 SSRF 防護，也跟上面那兩個開關無關。',
+    },
+    {
+      label: '預設翻譯模型',
+      env: 'LOCALMONKEY_TRANSLATE_MODEL',
+      value: (settings) => settings.translate?.model,
+      mono: true,
+      note: '每個站可以各自指定；留空就用這個。換模型會自動重翻（hash 含模型名）。',
+    },
+    {
+      label: '每批段數',
+      env: 'LOCALMONKEY_TRANSLATE_BATCH',
+      value: (settings) => settings.translate?.batchSize,
+    },
+    {
+      label: '模型保留時間',
+      env: 'LOCALMONKEY_TRANSLATE_KEEPALIVE',
+      value: (settings) => settings.translate?.keepAlive,
+      note: '太短的話每隔一陣子就要再吃一次冷啟動（實測約 45 秒）。',
+    },
+    {
+      label: '每批逾時',
+      env: 'LOCALMONKEY_TRANSLATE_TIMEOUT_MS',
+      value: (settings) => `${settings.translate?.timeoutMs} ms`,
+    },
+    {
+      label: '爬蟲禮貌間隔',
+      env: 'LOCALMONKEY_CRAWL_POLITENESS_MS',
+      value: (settings) => `${settings.translate?.crawlPolitenessMs} ms`,
+      note: '這是在打別人的伺服器，所以只准往上調（下限 500ms）。',
+    },
   ];
 
   function cell(row, settings) {
