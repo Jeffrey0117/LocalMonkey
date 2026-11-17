@@ -352,6 +352,19 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
     每次換 port 都重新帶一次 `?token=`。（這跟 README 已知限制 1 的 `lm_site` 是同一個根因。）
 32. **測 `src/public/*.js` 的純函式可以用 vm + 假 `window`**（`tests/unit/dashboard-format.test.js`），
     但回傳的陣列是**那個 realm 的 Array** → `deepEqual` 會失敗（同地雷 12）。先 `Array.from`。
+33. **⛔ 代理回的 HTML 沿用上游的快取指示 → 改完的東西永遠到不了瀏覽器。**
+    templatemo 回 `max-age=86400`，Chrome 就吃自己的快取一整天：`<base>` 的修正
+    早就上線、`curl` 拿到的是新的，但瀏覽器裡的 `<base href>` 還是舊值。
+    **伺服器端所有證據都說它是好的，而使用者看到的是壞的。**
+    已修（`lib/cache-policy.js`：HTML 一律 `no-store`，非 HTML 不動）。
+    留下兩個教訓：① `curl` 與瀏覽器看到的可以是不同的東西，驗 UI 一定要開瀏覽器
+    ② 我們回的 HTML 是**改造過的**，任何「照抄上游 header」的直覺都要先問
+    「這個 header 是在描述上游那份，還是我們這份？」
+34. **驗證快取行為不要用 query string 繞。** `?nocache=1` 會被原站 301 正規化掉
+    （我們的 Location 改寫是對的，所以你會被導回沒有 query 的網址 → 又中快取）。
+    **換一個 port 最乾淨**：瀏覽器的快取 key 含 port，新 port ＝ 全新的快取。
+    要確認某張頁面是不是從快取來的，看
+    `performance.getEntriesByType('navigation')[0].transferSize`（0 ＝ 用快取）。
 
 ---
 
