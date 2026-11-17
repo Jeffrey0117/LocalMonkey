@@ -92,13 +92,22 @@ test('/admin 回控制台的骨架（分頁、丟腳本、編輯器容器）', a
     'id="drop-open"',
     'id="editor"',
     'id="info-row"',
-    'id="script-list"',
     'id="site-rows"',
     'id="drop-targets"',
     'id="delivery-url"',
     'id="delivery-rotate"',
     'id="version-hint"',
     'id="version-bump"',
+
+    // v3：第一層是表格，點進去才是編輯器
+    'id="list-view"',
+    'id="script-rows"',
+    'id="script-list-empty"',
+    'id="editor-back"',
+    'data-sort="name"',
+    'data-sort="version"',
+    'data-sort="size"',
+    'data-sort="updatedAt"',
   ]) {
     assert.ok(response.text.includes(marker), `骨架少了 ${marker}`);
   }
@@ -208,16 +217,21 @@ test('⛔ 用 hidden 當開關、又自己設了 display 的元素，都靠上�
   }
 });
 
-test('⛔ 控制台的格線：單一列、可以縮，而且兩個 pane 明確放在第二欄', () => {
+test('⛔ 控制台的格線：單一列、可以縮，而且兩個 view 明確放在同一個格子', () => {
   const console = ruleFor('.console');
 
   assert.ok(console, '要有 .console 的規則');
   assert.match(console, /grid-template-rows:\s*minmax\(\s*0/, '列要寫明而且 min 是 0（才縮得下去）');
 
-  const pane = ruleFor('.editor-pane');
-  assert.match(pane, /grid-column:\s*2/, 'pane 要固定在第二欄，不能被自動排到隱含的第二列');
-  assert.match(pane, /grid-row:\s*1/);
-  assert.match(pane, /min-height:\s*0/, 'flex/grid 子項預設 min-height:auto，內容會把容器撐開');
+  // v3 是兩層（清單 / 編輯器）疊在同一個格子，靠 hidden 切換。
+  // 兩個都要明確指定格子，不然第二個會被自動排到隱含的第二列（高度還會由內容決定）。
+  for (const selector of ['.editor-pane', '.list-view']) {
+    const rule = ruleFor(selector);
+    assert.ok(rule, `要有 ${selector} 的規則`);
+    assert.match(rule, /grid-column:\s*1/, `${selector} 要明確放在第一欄`);
+    assert.match(rule, /grid-row:\s*1/, `${selector} 要明確放在第一列`);
+    assert.match(rule, /min-height:\s*0/, 'flex/grid 子項預設 min-height:auto，內容會把容器撐開');
+  }
 });
 
 test('⛔ 滿版高度：body 有 dvh、編輯器容器與 CodeMirror 都撐滿', () => {
@@ -241,10 +255,48 @@ test('空狀態 pane 置中在編輯區裡（不是浮在頁面角落）', () =>
   assert.match(placeholder, /padding:/, '貼著邊緣很醜，要有 padding');
 });
 
-test('窄螢幕改成上下排時，pane 的 grid-row 也跟著改（不然會跟清單疊在同一列）', () => {
+test('窄螢幕：站點與功能欄收起來（SPEC §2.3）', () => {
   const narrow = /@media \(max-width: 720px\) \{([\s\S]*?)\n\}/.exec(css());
 
   assert.ok(narrow, '要有窄螢幕的 media query');
-  assert.match(narrow[1], /\.editor-pane\s*\{[^}]*grid-row:\s*2/);
-  assert.match(narrow[1], /grid-template-rows:[^;]*minmax\(\s*0/);
+  assert.match(narrow[1], /\.col-sites,\s*\n?\s*\.col-features\s*\{[^}]*display:\s*none/);
+});
+
+/* --------------------------- v3：儀表板表格 --------------------------- */
+
+test('表格要密（行高小）而且表頭吸頂', () => {
+  assert.match(css(), /\.scripts-table th,\s*\n?\.scripts-table td\s*\{[^}]*padding:\s*5px/, '行高要小');
+  assert.match(ruleFor('.scripts-table th') ?? '', /position:\s*sticky/, '捲動時表頭要留著');
+});
+
+test('可排序的表頭：游標是 pointer，目前排序欄顯示 ▲/▼', () => {
+  const sortable = ruleFor('.scripts-table th.is-sortable');
+
+  assert.ok(sortable, '要有可排序表頭的規則');
+  assert.match(sortable, /cursor:\s*pointer/);
+  assert.match(css(), /\[data-direction='asc'\]::after\s*\{[^}]*▲/);
+  assert.match(css(), /\[data-direction='desc'\]::after\s*\{[^}]*▼/);
+});
+
+test('⛔ 停用的腳本整列轉灰（Tampermonkey 就是這樣，一眼看得出哪幾支沒在跑）', () => {
+  assert.match(css(), /\.script-row\.is-disabled td\s*\{[^}]*opacity:/);
+});
+
+test('版本與大小用等寬字體（整欄才掃得過去）', () => {
+  assert.match(ruleFor('.mono') ?? '', /font-family:[^;]*monospace/);
+});
+
+test('站點 favicon 有固定尺寸（不然圖片大小不一會把列撐歪）', () => {
+  const favicon = ruleFor('.favicon');
+
+  assert.ok(favicon, '要有 .favicon 的規則');
+  assert.match(favicon, /width:\s*16px/);
+  assert.match(favicon, /height:\s*16px/);
+});
+
+test('header 用 Tampermonkey 的深綠色系，其餘維持深色主題', () => {
+  assert.match(ruleFor(':root') ?? '', /--header-bg:/, 'header 顏色要是 token');
+  assert.match(ruleFor('.topbar') ?? '', /background:\s*var\(--header-bg\)/);
+  // 不要把整個控制台翻成淺色 —— 使用者只說要「接近」那個儀表板的樣子
+  assert.match(ruleFor('body') ?? '', /background:\s*var\(--bg\)/);
 });

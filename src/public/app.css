@@ -20,6 +20,17 @@
   --bad: #f85149;
   --radius: 6px;
   --topbar-height: 52px;
+
+  /*
+   * Header 用 Tampermonkey 的深綠色系（SPEC-dashboard §2.3）。
+   * 其餘維持原本的深色主題 —— 使用者要的是「接近那個儀表板的樣子」，
+   * 不是把整個控制台翻成淺色。
+   */
+  --header-bg: #0f3d24;
+  --header-line: #1b5c37;
+  --header-text: #e6f2ea;
+  --header-dim: #9cc4ab;
+  --header-hover: #17502f;
 }
 
 * {
@@ -70,13 +81,30 @@ textarea {
   align-items: center;
   gap: 16px;
   padding: 0 16px;
-  background: var(--bg-raised);
-  border-bottom: 1px solid var(--line);
+  background: var(--header-bg);
+  color: var(--header-text);
+  border-bottom: 1px solid var(--header-line);
 }
 
 .brand {
   font-weight: 600;
   letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brand-mark {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.version-tag {
+  font-size: 12px;
+  color: var(--header-dim);
+  border: 1px solid var(--header-line);
+  border-radius: 999px;
+  padding: 1px 8px;
 }
 
 .tabs {
@@ -88,7 +116,7 @@ textarea {
 .tab {
   background: none;
   border: 1px solid transparent;
-  color: var(--text-dim);
+  color: var(--header-dim);
   padding: 5px 12px;
   border-radius: var(--radius);
   cursor: pointer;
@@ -96,13 +124,14 @@ textarea {
 }
 
 .tab:hover {
-  color: var(--text);
+  color: var(--header-text);
+  background: var(--header-hover);
 }
 
 .tab.is-active {
-  background: var(--bg-input);
-  border-color: var(--line-strong);
-  color: var(--text);
+  background: var(--header-hover);
+  border-color: var(--header-line);
+  color: var(--header-text);
 }
 
 /* ------------------------------- 按鈕 ------------------------------- */
@@ -183,11 +212,11 @@ main {
 /* ------------------------- 控制台（清單 + 編輯器） ------------------------- */
 
 /*
- * 控制台的格線：左欄清單 + 右邊編輯區。
+ * 控制台是**兩層**：第一層是腳本表格，點進去才是編輯器。
+ * 兩個 view 疊在同一個格子裡，一次只顯示一個（靠 hidden 切換）。
  *
- * ⛔ 這裡有三個子元素（sidebar、編輯器 pane、空狀態 pane）但只有兩欄，
- * 所以**一定要把兩個 pane 明確放在同一個格子裡**。不然第三個子元素會被
- * 自動排到「隱含的第二列第一欄」= 視窗左下角、貼著左緣（實際發生過）。
+ * ⛔ 兩個子元素都要明確寫 `grid-column: 1; grid-row: 1`。沒寫的話第二個會被
+ * 自動排到「隱含的第二列」= 視窗下半部、而且高度由內容決定（實際發生過）。
  *
  * `grid-template-rows: minmax(0, 1fr)` 也是必要的：只有一列、而且那一列可以縮。
  * 不寫的話列高由內容決定，編輯器就不會撐滿視窗高度（實際發生過：744px 的視窗，
@@ -196,80 +225,23 @@ main {
  */
 .console {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) 1fr;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
-.sidebar {
+.list-view {
   grid-column: 1;
   grid-row: 1;
-  border-right: 1px solid var(--line);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
 }
 
-.script-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.script-item {
-  display: grid;
-  grid-template-columns: 10px 1fr auto;
-  grid-template-areas: 'dot name version' '. sub sub';
-  gap: 2px 8px;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
-}
-
-.script-item:hover {
-  background: var(--bg-raised);
-}
-
-.script-item.is-selected {
-  background: var(--bg-input);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.dot {
-  grid-area: dot;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.dot.is-on {
-  background: var(--ok);
-}
-
-.dot.is-off {
-  background: var(--line-strong);
-}
-
-.script-name {
-  grid-area: name;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.script-item .muted {
-  grid-area: version;
-}
-
-.script-sub {
-  grid-area: sub;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* 兩個 pane（編輯器 / 空狀態）疊在同一個格子，一次只顯示一個（靠 hidden 切換） */
 .editor-pane {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
   display: flex;
   flex-direction: column;
@@ -277,13 +249,16 @@ main {
   min-width: 0;
 }
 
-/* 空狀態：置中在右邊的編輯區裡，不是浮在整個頁面的角落 */
+/* 空狀態：置中在清單區裡，不是浮在整個頁面的角落 */
 .placeholder-pane {
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
   padding: 24px;
   text-align: center;
   color: var(--text-dim);
+  margin: 0;
 }
 
 .editor-head {
@@ -293,6 +268,10 @@ main {
   gap: 12px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.back-button {
+  flex: 0 0 auto;
 }
 
 .editor-title {
@@ -501,6 +480,221 @@ main {
   color: #89ddff;
 }
 
+/* --------------------------- 腳本表格（儀表板） --------------------------- */
+
+/* 表格要密、行高小（SPEC §2.3）—— 這是控制台，不是行銷頁 */
+.scripts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.scripts-table th,
+.scripts-table td {
+  padding: 5px 10px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.scripts-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* 可排序的表頭：游標要是 pointer，目前排序欄顯示 ▲/▼ */
+.scripts-table th.is-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.scripts-table th.is-sortable:hover {
+  color: var(--text);
+}
+
+.scripts-table th.is-sortable::after {
+  content: '';
+  margin-left: 6px;
+  opacity: 0.6;
+}
+
+.scripts-table th.is-sorted[data-direction='asc']::after {
+  content: '▲';
+}
+
+.scripts-table th.is-sorted[data-direction='desc']::after {
+  content: '▼';
+}
+
+.scripts-table th.is-sorted {
+  color: var(--text);
+}
+
+.script-row:hover td {
+  background: var(--bg-raised);
+}
+
+/* 停用的整列轉灰（Tampermonkey 就是這樣）—— 一眼看得出哪幾支沒在跑 */
+.script-row.is-disabled td {
+  opacity: 0.45;
+}
+
+.script-row.is-disabled .enable-toggle,
+.script-row.is-disabled .col-actions {
+  opacity: 1;
+}
+
+.col-order {
+  width: 56px;
+}
+
+.order-input {
+  width: 44px;
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 2px 4px;
+  font: inherit;
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+}
+
+.col-enabled {
+  width: 64px;
+}
+
+.col-version,
+.col-size {
+  width: 88px;
+}
+
+.col-updated {
+  width: 92px;
+  color: var(--text-dim);
+}
+
+.col-actions {
+  width: 92px;
+  text-align: right;
+}
+
+/* min-width：emoji 字面寬度不一，不給下限的話 🗑 會被擠成一條 */
+.col-actions button {
+  padding: 2px 6px;
+  min-width: 30px;
+}
+
+/* 版本與大小用等寬字體（SPEC §2.3） */
+.mono {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Noto Sans Mono', monospace;
+  font-size: 12px;
+}
+
+/* 名稱本身就是「進編輯器」的入口，長得像連結但其實是 button（鍵盤也走得到） */
+.link-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.row-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 開關 */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  position: relative;
+  transition: background 0.12s ease;
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.12s ease;
+}
+
+.toggle input:checked + .toggle-track {
+  background: var(--ok);
+}
+
+.toggle input:checked + .toggle-track::after {
+  transform: translateX(14px);
+}
+
+.toggle input:focus-visible + .toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 站點 favicon */
+.favicons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: contain;
+  background: var(--bg-input);
+}
+
+.favicon-more {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* 功能圖示 */
+.feature {
+  margin-right: 4px;
+  cursor: help;
+}
+
+.feature.is-bad {
+  color: var(--bad);
+}
+
 /* ------------------------------ 網站分頁 ------------------------------ */
 
 .sites-panel {
@@ -665,22 +859,22 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 720px) {
-  /* 窄螢幕改成上下排。pane 的 grid-row 要跟著改，不然會被壓到清單那一列去 */
-  .console {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(120px, 30vh) minmax(0, 1fr);
+  /*
+   * 窄螢幕：站點與功能欄收起來（SPEC §2.3）。
+   * 兩個 view 還是疊在同一個格子，不要在這裡改 grid-row —— 這個版面沒有「上下排」。
+   */
+  .col-sites,
+  .col-features {
+    display: none;
   }
 
-  .sidebar {
-    grid-column: 1;
-    grid-row: 1;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+  .scripts-table th,
+  .scripts-table td {
+    padding: 5px 6px;
   }
 
-  .editor-pane {
-    grid-column: 1;
-    grid-row: 2;
+  .row-sub {
+    display: none;
   }
 }
 

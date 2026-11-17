@@ -1,10 +1,17 @@
-/* 「腳本」分頁：左邊清單、右邊編輯器 + 唯讀資訊列。 */
+/*
+ * 「已安裝的腳本」分頁。
+ *
+ * 兩層：第一層是表格（scripts-table.js 畫），點名稱或 ✏️ 才進第二層的編輯器。
+ * 編輯器本身還是 v2 那一個（唯讀資訊列 + CodeMirror + 安裝網址列 + 版本提示），
+ * 只是從「常駐並排」改成「從列表進入」。
+ */
 'use strict';
 
 window.LocalMonkeyScriptsTab = (function createScriptsTab() {
-  const { escapeHtml, byId, debounce, banner, delegate, copyText } = window.LocalMonkeyUi;
+  const { byId, debounce, banner, copyText } = window.LocalMonkeyUi;
   const api = window.LocalMonkeyApi;
   const infoBar = window.LocalMonkeyInfoBar;
+  const table = window.LocalMonkeyScriptsTable;
 
   const PARSE_DELAY_MS = 300;
 
@@ -16,30 +23,10 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     onSitesChanged: () => {},
   };
 
-  function listItem(script) {
-    const dot = script.enabled ? 'is-on' : 'is-off';
-    const version = script.version ? `<span class="muted">${escapeHtml(script.version)}</span>` : '';
-    const sites = script.site_ids.length > 0
-      ? `${script.site_ids.length} 個網站`
-      : '<span class="warn-text">沒有網站</span>';
-
-    return `
-      <li class="script-item ${script.id === state.selectedId ? 'is-selected' : ''}" data-script-id="${escapeHtml(script.id)}">
-        <span class="dot ${dot}"></span>
-        <span class="script-name">${escapeHtml(script.name)}</span>
-        ${version}
-        <span class="script-sub">${sites}</span>
-      </li>`;
-  }
-
-  function renderList() {
-    byId('script-list').innerHTML = state.scripts.map((script) => listItem(script)).join('');
-    byId('script-list-empty').hidden = state.scripts.length > 0;
-  }
-
-  function showPane(hasSelection) {
-    byId('editor-pane').hidden = !hasSelection;
-    byId('editor-empty').hidden = hasSelection;
+  /** 一次只顯示一層 */
+  function showEditor(open) {
+    byId('editor-pane').hidden = !open;
+    byId('list-view').hidden = open;
   }
 
   /** 打字時重新解析：資訊列跟著 header 走 */
@@ -62,10 +49,6 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
 
     row.hidden = false;
     byId('delivery-url').textContent = script.deliveryUrl;
-    hideVersionHint();
-  }
-
-  function hideVersionHint() {
     byId('version-hint').hidden = true;
   }
 
@@ -100,16 +83,22 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
       byId('editor-enabled-label').textContent = script.enabled ? '啟用' : '停用';
 
       renderDelivery(script);
+      showEditor(true);
 
-      showPane(true);
       state.editor.setValue(script.source);
       state.editor.refresh();
 
-      renderList();
       reparse(script.source);
     } catch (error) {
       banner.error(error);
     }
+  }
+
+  function backToList() {
+    state.selectedId = null;
+    state.loaded = null;
+    showEditor(false);
+    banner.hide();
   }
 
   async function save({ bumpVersion = false } = {}) {
@@ -151,18 +140,16 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     }
   }
 
-  async function remove() {
-    if (!state.selectedId || !state.loaded) return;
+  /** 從列表或編輯器都會呼叫；刪完一定回到列表 */
+  async function remove(scriptId, name) {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`確定要刪掉「${state.loaded.name}」？這個動作不能復原。`)) return;
+    if (!window.confirm(`確定要刪掉「${name}」？這個動作不能復原。`)) return;
 
     try {
-      await api.deleteScript(state.selectedId);
-      state.selectedId = null;
-      state.loaded = null;
-      showPane(false);
-      banner.show('已刪除。', 'ok');
+      await api.deleteScript(scriptId);
+      if (state.selectedId === scriptId) backToList();
 
+      banner.show('已刪除。', 'ok');
       await refresh();
       state.onSitesChanged();
     } catch (error) {
@@ -170,16 +157,50 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     }
   }
 
+  function nameOf(scriptId) {
+    return state.scripts.find((script) => script.id === scriptId)?.name ?? scriptId;
+  }
+
+  /** 列表上的開關：切換即時存檔 */
+  async function setEnabled(scriptId, enabled) {
+    try {
+      await api.saveScript(scriptId, { enabled });
+      await refresh();
+
+      if (state.selectedId === scriptId) {
+        byId('editor-enabled').checked = enabled;
+        byId('editor-enabled-label').textContent = enabled ? '啟用' : '停用';
+      }
+    } catch (error) {
+      banner.error(error);
+      await refresh(); // 存檔失敗就把畫面轉回伺服器的真相
+    }
+  }
+
+  async function setOrder(scriptId, orderIndex) {
+    if (!Number.isInteger(orderIndex)) {
+      await refresh();
+      return;
+    }
+
+    try {
+      await api.saveScript(scriptId, { order_index: orderIndex });
+      await refresh();
+    } catch (error) {
+      banner.error(error);
+      await refresh();
+    }
+  }
+
   async function refresh() {
     state.scripts = await api.listScripts();
 
+    // 選中的那支被刪掉了（可能是在別的分頁刪的）→ 退回列表
     if (state.selectedId && !state.scripts.some((script) => script.id === state.selectedId)) {
-      state.selectedId = null;
-      state.loaded = null;
-      showPane(false);
+      backToList();
     }
 
-    renderList();
+    table.setScripts(state.scripts);
   }
 
   function init({ onSitesChanged }) {
@@ -190,12 +211,15 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
       onSave: () => save(),
     });
 
-    delegate(byId('script-list'), '.script-item', 'click', (event, item) => {
-      select(item.dataset.scriptId);
+    table.init({
+      onEdit: (scriptId) => select(scriptId),
+      onDelete: (scriptId) => remove(scriptId, nameOf(scriptId)),
+      onToggle: (scriptId, enabled) => setEnabled(scriptId, enabled),
+      onReorder: (scriptId, orderIndex) => setOrder(scriptId, orderIndex),
     });
 
+    byId('editor-back').addEventListener('click', backToList);
     byId('editor-save').addEventListener('click', () => save());
-
     byId('version-bump').addEventListener('click', () => save({ bumpVersion: true }));
 
     byId('delivery-copy').addEventListener('click', () => {
@@ -221,7 +245,11 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
         banner.error(error);
       }
     });
-    byId('editor-delete').addEventListener('click', remove);
+
+    byId('editor-delete').addEventListener('click', () => {
+      if (state.selectedId) remove(state.selectedId, state.loaded?.name ?? '');
+    });
+
     byId('editor-enabled').addEventListener('change', (event) => {
       byId('editor-enabled-label').textContent = event.target.checked ? '啟用' : '停用';
     });
@@ -229,5 +257,5 @@ window.LocalMonkeyScriptsTab = (function createScriptsTab() {
     return refresh();
   }
 
-  return { init, refresh, select };
+  return { init, refresh, select, backToList };
 })();
