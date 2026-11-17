@@ -5,6 +5,7 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 
 - [`docs/SPEC.md`](docs/SPEC.md) —— **v1：代理核心**（路由、SSRF、認證、HTML 改寫）
 - [`docs/SPEC-console.md`](docs/SPEC-console.md) —— **v2：油猴腳本控制台**（解析、多對多、GM API）
+- [`docs/SPEC-dashboard.md`](docs/SPEC-dashboard.md) —— **v3：`<base>` 修正 + 儀表板**
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -38,7 +39,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，686 個測試
+npm test             # node:test，772 個測試
 npm run test:coverage
 ```
 
@@ -82,6 +83,17 @@ token 在 `data/admin-token.txt`（gitignore）。測 JSON API 用 **bash 的 cu
 4. `proxy/respond.js` → 過濾回應 header、改 `Location`、改 `Set-Cookie`、
    HTML 的話再做路徑改寫與腳本注入
 
+HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是規格的一部分**：
+
+```
+<base href>      lib/base-tag.js      指向本站 → /p/<siteId>/；別的網域原樣保留
+<meta refresh>   lib/meta-refresh.js  同上（不改的話幾秒後使用者就離開代理了）
+根絕對路徑        rewriteRootPaths     src/href/action/poster/formaction + srcset
+```
+
+前兩步要在根絕對路徑**之前**做。它們共用 `lib/proxy-path.js` 的
+「這個網址指向被代理的站嗎」判斷（絕對網址 / protocol-relative / 根相對路徑都吃）。
+
 每一層都是獨立的純函式模組（`src/lib/*`），單元測試打的是它們；
 整合測試打的是整條管線（真 server + 真假上游）。
 
@@ -122,6 +134,24 @@ GET /s/<token>/<slug>.user.js      ← Tampermonkey（匿名，它帶不了 admi
 ```
 
 ---
+
+### 後台前端（v3 之後是兩層）
+
+```
+index.html          三個分頁：已安裝的腳本 / 網站 / 設定
+  ui.js             escapeHtml / byId / debounce / banner / delegate
+  format.js         大小、相對時間、排序（純函式，vm 裡測得到）
+  api.js            /admin/api/* 的呼叫層
+  scripts-table.js  第一層：表格 + 排序 + 開關 + favicon + 功能圖示
+  scripts-tab.js    第一層 ↔ 第二層的協調者
+  info-bar.js       編輯器上方那排唯讀資訊（跟著打字即時重新解析）
+  editor.js         CodeMirror 的薄包裝
+  sites-tab.js / settings-tab.js / drop-script.js / app.js
+```
+
+`.console` 是一個**單欄單列**的 grid，`#list-view` 與 `#editor-pane` 疊在
+同一個格子裡靠 `hidden` 切換。兩個都要明確寫 `grid-column: 1; grid-row: 1`
+（理由見地雷 26 —— 沒寫的話第二個會掉到隱含的第二列）。
 
 ## 資料模型（v2）
 
@@ -201,6 +231,19 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
   會組出內部位址。）`Host` 是請求端可控的，所以有限字集。
 - **版本號不要幫使用者偷偷改。** 存檔只回報 `versionBumped`，由 UI 問他要不要「版本 +1」；
   真的要改的時候是**伺服器端**改 source 再存（這樣畫面上的 source 跟實際投遞的永遠同一份）。
+- **`<base>` 的比對用 `host` 而不是整個 origin。** 同主機但 scheme 不同（舊站留著
+  `http://`）照樣會把瀏覽器帶離代理，那不是「跨網域意圖」。`lib/proxy-path.js` 有註解。
+- **favicon 是伺服器端自己抓的，不准用 `google.com/s2/favicons`。** 第三方 favicon 服務
+  等於把「使用者代理了哪些網站」整份洩漏出去。而且**上游的 `image/svg+xml` 一律拒收** ——
+  SVG 可以內含 `<script>`，而那張圖是從我們自己的 origin 送出去的（同 `safeAssetContentType`）。
+- **`/__lm/favicon/<siteId>` 永遠回 200 的一張圖。** 抓不到、站不存在、被 SSRF 擋下來
+  都回內建佔位 SVG。回 404 的話列表會有一排破圖加一排 console 錯誤；而且「站不存在」
+  與「抓不到」回一樣的東西，這個匿名端點就不會洩漏哪些站存在。
+- **後台列表的欄位從 `metadata` 算，不從 `source` 算**（`lib/script-features.js`）。
+  列表一次畫十幾支，不能為了一排小圖示把每支 source 讀出來重新解析。
+- **「設定」分頁是唯讀的，而且只回路徑不回 token。** 那些值是 env，改了要重啟才生效，
+  做成輸入框等於騙人。token 的值沒有理由進 JSON 回應（會留在網路紀錄、擴充套件、截圖）。
+  兩件事都有測試釘著。
 
 ---
 
@@ -290,6 +333,25 @@ assets         sha256 PK / url / content(BLOB) / content_type / bytes / fetched_
 24. **用 `&&` 串 `npm test` 與 `git commit` 不會擋住失敗的 commit**，因為中間那段
     `grep` 有找到東西就回 0。我用這招推過一次紅的（`de64785`）。要擋就看 `npm test`
     自己的 exit code，別讓 grep 吃掉它。
+
+28. **⛔ `curl` 驗不出 `<base href>` 造成的災難。** curl 不解析 `<base>`，所以
+    `curl /p/<site>/x.css` 回 200 一切正常 —— 但真瀏覽器會拿原站的 base 去解析那個路徑，
+    實際打的是 `https://原站/p/<site>/x.css` → 全部 404、整頁沒樣式。
+    唯一驗得到的方式是**真的開瀏覽器**然後看
+    `performance.getEntriesByType('resource')` 的 `transferSize`（壞掉時全是 0，
+    而且 `name` 的前綴是原站不是代理）。注入的 `<script>` 也一樣
+    —— **tag 在 DOM 裡不代表它載得到**，要看 `transferSize` 或腳本的副作用。
+29. **`(["'])([^"']*)\1` 這種「引號 + back-reference」的屬性比對有盲點。**
+    負向字元類裡不能放 back-reference，所以只能同時排除兩種引號 —— 於是
+    `content="0; url='https://x/'"`（外層雙引號、內層單引號）**整個比對失敗**。
+    要用 `"[^"]*"|'[^']*'` 的交替寫法（`lib/attribute.js` 包好了，新的屬性改寫直接用它）。
+30. **SQLite 的 `LENGTH()` 對 TEXT 回的是字元數，不是 byte 數。**
+    中文註解的腳本大小會被短報三倍。要 byte 就 `LENGTH(CAST(source AS BLOB))`。
+31. **瀏覽器的 cookie 不分 port。** 同時在 `127.0.0.1` 上開兩個 LocalMonkey 實例驗證時，
+    後登入的那個會把 `lm_admin` cookie 蓋掉，另一個就變 401 —— 看起來像「後台壞了」。
+    每次換 port 都重新帶一次 `?token=`。（這跟 README 已知限制 1 的 `lm_site` 是同一個根因。）
+32. **測 `src/public/*.js` 的純函式可以用 vm + 假 `window`**（`tests/unit/dashboard-format.test.js`），
+    但回傳的陣列是**那個 realm 的 Array** → `deepEqual` 會失敗（同地雷 12）。先 `Array.from`。
 
 ---
 

@@ -559,6 +559,10 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
    undici dispatcher，那會把零依賴的簡單性吃掉）。每次請求都檢查已經擋掉了實際可行的 rebinding 攻擊。
 6. **每個代理請求都會做一次 DNS 查詢。** 作業系統的 DNS cache 會吸收大部分成本，但它不是零。
 7. **代理自己只跑 http。** 沒有 TLS。它設計上是跑在你信任的網路裡。
+8. **`<base href>` 與 meta refresh 只有「指向被代理的那個站」才會改寫。**
+   指向別的網域的保留原樣（那是真的跨網域意圖）。沒有引號的 `<base href=…>`
+   也不會被改寫 —— 同第 3 點的保守規則，但這一種**沒有 fallback 接得住**
+   （base 會讓整頁的相對路徑一起偏掉）。實務上沒遇過，遇到就得放寬那條規則。
 8. **把自己的 origin 寫死在 JS 裡的網站會逃出代理**（例如 `location.href = 'https://www.example.com/x'`）。
    這種要自己寫一支腳本把它改回來 —— 這正是 LocalMonkey 存在的用途。
 9. **HTML 改寫走 latin1 來回轉換**，所以不管頁面是 UTF-8 還是 Big5，沒被我們改到的 byte 都原封不動。
