@@ -108,8 +108,36 @@ test('/admin 回控制台的骨架（分頁、丟腳本、編輯器容器）', a
     'data-sort="version"',
     'data-sort="size"',
     'data-sort="updatedAt"',
+
+    // v3：唯讀的設定分頁
+    'data-tab="settings"',
+    'id="tab-settings"',
+    'id="settings-rows"',
   ]) {
     assert.ok(response.text.includes(marker), `骨架少了 ${marker}`);
+  }
+});
+
+test('⛔ 設定分頁是唯讀的：骨架裡不准有輸入框（那些是 env，改了要重啟）', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const panel = /<section[^>]*id="tab-settings"[\s\S]*?<\/section>/.exec(html);
+
+  assert.ok(panel, '要有設定分頁');
+  assert.equal(/<input|<select|<textarea/i.test(panel[0]), false, '設定分頁不准有輸入元件');
+});
+
+test('設定分頁每一項都要附上對應的環境變數名稱', () => {
+  const source = fs.readFileSync(path.join(PUBLIC_DIR, 'settings-tab.js'), 'utf8');
+
+  for (const name of [
+    'PORT',
+    'HOST',
+    'LOCALMONKEY_DATA_DIR',
+    'LOCALMONKEY_ADMIN_TOKEN',
+    'LOCALMONKEY_ALLOW_PRIVATE',
+    'LOCALMONKEY_GM_ALLOW_HOSTS',
+  ]) {
+    assert.ok(source.includes(name), `設定分頁少了 ${name}`);
   }
 });
 

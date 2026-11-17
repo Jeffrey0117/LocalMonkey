@@ -5,17 +5,23 @@
   const { byId, banner } = window.LocalMonkeyUi;
   const scriptsTab = window.LocalMonkeyScriptsTab;
   const sitesTab = window.LocalMonkeySitesTab;
+  const settingsTab = window.LocalMonkeySettingsTab;
   const dropScript = window.LocalMonkeyDropScript;
+
+  const PANELS = { scripts: 'tab-scripts', sites: 'tab-sites', settings: 'tab-settings' };
 
   function showTab(name) {
     for (const button of document.querySelectorAll('.tab')) {
       button.classList.toggle('is-active', button.dataset.tab === name);
     }
 
-    byId('tab-scripts').hidden = name !== 'scripts';
-    byId('tab-sites').hidden = name !== 'sites';
+    for (const [tab, panelId] of Object.entries(PANELS)) {
+      byId(panelId).hidden = tab !== name;
+    }
 
+    // 切過去才抓資料：設定是唯讀快照，每次進來都該是最新的
     if (name === 'sites') sitesTab.refresh().catch((error) => banner.error(error));
+    if (name === 'settings') settingsTab.refresh().catch((error) => banner.error(error));
   }
 
   byId('tabs').addEventListener('click', (event) => {
@@ -43,5 +49,6 @@
       onSitesChanged: () => sitesTab.refresh().catch((error) => banner.error(error)),
     }),
     sitesTab.init(),
+    settingsTab.init(),
   ]).catch((error) => banner.error(error));
 })();

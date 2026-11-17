@@ -15,6 +15,7 @@
       <nav class="tabs" id="tabs">
         <button type="button" class="tab is-active" data-tab="scripts">已安裝的腳本</button>
         <button type="button" class="tab" data-tab="sites">網站</button>
+        <button type="button" class="tab" data-tab="settings">設定</button>
       </nav>
 
       <span class="version-tag">v2</span>
@@ -126,6 +127,25 @@
         <p class="placeholder" id="site-list-empty">還沒有網站。丟一支帶 <code>@match</code> 的腳本就會自動建。</p>
       </section>
 
+      <!-- ───────────────────────────── 設定 ───────────────────────────── -->
+      <section class="panel settings-panel" id="tab-settings" hidden>
+        <p class="hint">
+          這一頁是<strong>唯讀</strong>的 —— 下面每一項都是環境變數，改了要重啟才生效，
+          做成輸入框只會給人錯誤期待。要改就改啟動時的環境變數。
+        </p>
+        <div class="table-scroll">
+          <table class="settings">
+            <thead>
+              <tr>
+                <th>設定</th>
+                <th>目前生效的值</th>
+                <th>環境變數</th>
+              </tr>
+            </thead>
+            <tbody id="settings-rows"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
 
     <!-- ───────────────────────────── 丟腳本 ───────────────────────────── -->
@@ -178,6 +198,7 @@
     <script src="/admin/scripts-table.js"></script>
     <script src="/admin/scripts-tab.js"></script>
     <script src="/admin/sites-tab.js"></script>
+    <script src="/admin/settings-tab.js"></script>
     <script src="/admin/drop-script.js"></script>
     <script src="/admin/app.js"></script>
   </body>

@@ -1,7 +1,9 @@
 'use strict';
 
+const path = require('node:path');
 const express = require('express');
 
+const { TOKEN_FILENAME } = require('../admin/token.js');
 const {
   validateSiteCreate,
   validateSiteUpdate,
@@ -122,14 +124,24 @@ function createAdminApiRouter({ store, config, logger, fetchImpl }) {
 
   /**
    * 控制台需要知道的伺服器設定。
-   * 目前只有 GM 白名單 —— 前端要靠它判斷「這支腳本的 @connect 會不會被擋」。
-   * 刻意不回任何 token 或路徑。
+   *
+   * 兩個用途：資訊列判斷「這支腳本的 @connect 會不會被擋」（GM 白名單），
+   * 以及「設定」分頁把目前生效的值列出來（SPEC-dashboard §2.4）。
+   *
+   * ⛔ 回的是**路徑**，不是 token 本身。這支端點已經過後台認證，給管理者看
+   * 「DB 在哪、token 檔在哪」是他要的資訊；但 token 的值沒有任何理由放進
+   * JSON 回應裡（會進瀏覽器的網路紀錄、擴充套件、截圖）。
    */
   router.get('/settings', (req, res) => {
     res.json({
       settings: {
         gmAllowHosts: config.gmXhr?.allowHosts ?? [],
         allowPrivate: config.allowPrivate === true,
+        port: config.port ?? null,
+        host: config.host ?? null,
+        dataDir: config.dataDir ?? null,
+        databaseFile: config.databaseFile ?? null,
+        adminTokenFile: config.dataDir ? path.join(config.dataDir, TOKEN_FILENAME) : null,
       },
     });
   });

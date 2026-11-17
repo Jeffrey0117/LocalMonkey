@@ -697,9 +697,20 @@ main {
 
 /* ------------------------------ 網站分頁 ------------------------------ */
 
-.sites-panel {
+.sites-panel,
+.settings-panel {
   padding: 16px;
   overflow-y: auto;
+}
+
+/* 設定是唯讀的三欄表：名稱 / 目前的值 / 對應的環境變數 */
+.settings td:first-child {
+  width: 220px;
+}
+
+.settings code {
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .hint {
