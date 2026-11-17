@@ -4,6 +4,7 @@ const { filterResponseHeaders } = require('../lib/headers.js');
 const { rewriteSetCookie } = require('../lib/cookies.js');
 const { rewriteLocation } = require('../lib/location.js');
 const { rewriteDocumentUrls, injectScripts } = require('../lib/html.js');
+const { withHtmlCachePolicy } = require('../lib/cache-policy.js');
 const { planInjection } = require('../lib/injection.js');
 const { SITE_COOKIE_NAME } = require('../lib/site-resolve.js');
 
@@ -45,8 +46,16 @@ function transformHtml(buffer, { site, scripts }) {
   return Buffer.from(injectScripts(rewritten, scripts), 'latin1');
 }
 
-function copyHeaders(res, response, site) {
-  for (const [name, value] of filterResponseHeaders(response.headers)) {
+/**
+ * HTML 的 header 要多做一件事：拿掉上游的快取指示、改成 no-store
+ * （理由在 lib/cache-policy.js —— 我們回的 HTML 是改造過的，不是上游那份）。
+ * 非 HTML 原樣轉述，那是效能的來源。
+ */
+function copyHeaders(res, response, site, { html }) {
+  const filtered = filterResponseHeaders(response.headers);
+  const pairs = html ? withHtmlCachePolicy(filtered) : filtered;
+
+  for (const [name, value] of pairs) {
     res.setHeader(name, name === 'location' ? rewriteLocation(value, site) : value);
   }
 
@@ -64,7 +73,7 @@ function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store
   const html = isHtmlResponse(response.headers.get('content-type'));
   const hasBody = !BODYLESS_STATUSES.has(response.status) && buffer.length > 0;
 
-  copyHeaders(res, response, site);
+  copyHeaders(res, response, site, { html });
 
   if (html) {
     // 根路徑 fallback 要靠這個 cookie 才知道 /assets/app.js 是誰的
