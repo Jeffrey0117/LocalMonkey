@@ -300,13 +300,22 @@ function clearQueue(db, hashes) {
   return apply();
 }
 
-/** 整批失敗：留在佇列、attempts +1、記下原因（規格 §4） */
-function recordQueueFailure(db, rows, error) {
+/**
+ * 失敗：留在佇列、記下原因（規格 §4）。
+ *
+ * ⛔ `countAttempt: false` 是給「跟段落內容無關」的失敗用的（連不到 ollama、
+ * HTTP 錯）。那種情況下燒掉 attempts，等於 ollama 關一小時就把整站的段落
+ * 標成「翻不動」—— 而那些段落可能一個問題都沒有。
+ * 原因還是要寫進 `last_error`，UI 才看得到發生什麼事。
+ */
+function recordQueueFailure(db, rows, error, { countAttempt = true } = {}) {
   if (rows.length === 0) return 0;
 
   const message = String(error ?? '未知錯誤').slice(0, 500);
   const update = db.prepare(
-    'UPDATE translate_queue SET attempts = attempts + 1, last_error = ? WHERE hash = ?',
+    countAttempt
+      ? 'UPDATE translate_queue SET attempts = attempts + 1, last_error = ? WHERE hash = ?'
+      : 'UPDATE translate_queue SET last_error = ? WHERE hash = ?',
   );
 
   const apply = db.transaction(() =>

@@ -40,7 +40,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1014 個測試
+npm test             # node:test，1026 個測試
 npm run test:coverage
 ```
 
@@ -167,10 +167,25 @@ proxy/respond.js → translate/service.js translateHtml()   ← 同步！
 
 ```
 queue.drain() → claim(batchSize, exclude=這一輪試過的)
-              → ollama.translateBatch()  ← 索引 key、temperature 0、對齊防呆
+              → translateChunk()  ← 對不上就二分，見下
               → 成功：寫 translations（manual 不准被覆蓋）+ 清出佇列
-                失敗：整批退回原文、attempts +1、記 last_error、**換下一批繼續**
+                失敗：退回原文、記 last_error、**換下一批繼續**
 ```
+
+**失敗就二分**（`translateChunk`）—— 這是整個佇列最重要的一段：
+
+```
+20 段 →(模型回 35 個 key) 10 + 10 →(還對不上) 5+5+5+5 → … → 單段
+                                                            ↑
+                              單段不可能數量對不上（送 1 回 1），所以一定收斂
+```
+
+`error.kind` 決定失敗之後怎麼辦（分類在 `ollama.js`）：
+
+| kind | 二分？ | 燒 attempts？ | 這一輪繼續？ |
+|---|---|---|---|
+| `alignment`（模型回了但答案錯） | **是** | 只有單段也失敗才算 | 是 |
+| `timeout` / `unreachable` / `http`（沒拿到答案） | 否 | **否** | 否（收手） |
 
 `src/translate/` 的分工（每支都小，純函式的部分測得最密）：
 
@@ -519,6 +534,16 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
   **錯位比翻錯危險得多** —— 每一段看起來都有翻，不會有人發現，而且會進永久快取。
 - **對齊防呆：任何一條不符就整批丟棄。** 是 object、key 剛好 `"0"`..`"n-1"`、
   每個 value 是非空字串。這段有退化驗證（把檢查拿掉，24 條裡有 9 條變紅）。
+- **⛔ 對不上要二分，不要「固定批次重試三次」。** 實測（2026-11-18 對真的
+  templatemo）：**20 段的批次，qwen2.5 回了 35 個 key**。規格的「批次 20」是從
+  「10 段實測完美」外推的，那個外推錯了。固定批次 + 整批記 attempts 的語意是
+  **19 個好段被 1 個壞段連坐**，三輪之後那 19 段也一起被標成翻不動。
+- **⛔ 只有「模型的答案錯了」才二分，「沒拿到答案」不二分。** 逾時一次要等 120 秒，
+  遞迴二分 20 段會變成 39 次逾時 ＝ 一個多小時。而逾時最常見的原因是冷啟動，
+  收手、下一次 kick 時模型已經熱了就過了。
+- **⛔ 基礎設施的失敗不准燒掉段落的重試額度。** ollama 關一小時，不該讓整站的段落
+  都被標成「翻不動」—— 那些段落可能一個問題都沒有。`recordFailure` 的
+  `countAttempt: false` 就是這件事（原因照樣寫進 `last_error` 給 UI 看）。
 - **hash 用長度前綴，不是規格寫的換行分隔。** 規格的
   `sha256(原文 + '\n' + lang + '\n' + model)` 會讓 `('a','b\nzh')` 與 `('a\nb','zh')`
   撞成同一個 hash ＝某一段拿到另一段的譯文。實務上撞不到（原文的換行已經被

@@ -12,20 +12,48 @@
 
 const { buildPrompt } = require('./prompt.js');
 
+/**
+ * `kind` 是給佇列用的分類，決定失敗之後要怎麼辦（見 queue.js）：
+ *
+ * | kind | 意思 | 佇列的反應 |
+ * |---|---|---|
+ * | `alignment`  | 模型**回了**，但對不上 | **二分重試**，單段也失敗才 `attempts += 1` |
+ * | `timeout`    | 等太久，沒拿到回應 | 不二分、不燒 attempts、這一輪收手 |
+ * | `unreachable`| 連不到 ollama | 同上 |
+ * | `http`       | ollama 回 4xx/5xx | 同上（模型名稱打錯之類，二分也沒用） |
+ *
+ * ⛔ **只有「模型的答案錯了」才值得二分**，「沒拿到答案」不值得。
+ * 逾時一次就要等 120 秒，遞迴二分 20 段會變成 39 次逾時 ＝ 一個多小時。
+ * 而逾時最常見的原因是冷啟動 —— 收手、下一次 kick 時模型已經熱了就過了。
+ *
+ * ⛔ 「要不要二分」與「要不要燒掉那一段的重試額度」是**兩個不同的問題**。
+ * 基礎設施壞掉時燒 attempts，等於 ollama 關一小時就把整站標成「翻不動」。
+ */
 class OllamaError extends Error {
-  constructor(message, options) {
+  constructor(message, { kind = 'unreachable', ...options } = {}) {
     super(message, options);
     this.name = 'OllamaError';
+    this.kind = kind;
   }
 }
 
-/** 對齊檢查沒過。呼叫端要整批退回原文、`attempts += 1`。 */
+/** 對齊檢查沒過 —— 這是**內容**的問題，所以值得二分去找出是哪一段。 */
 class AlignmentError extends OllamaError {
   constructor(message, { reason } = {}) {
-    super(message);
+    super(message, { kind: 'alignment' });
     this.name = 'AlignmentError';
     this.reason = reason ?? message;
   }
+}
+
+/** 模型**回了**但答案錯 → 拆小有機會找出是哪一段的問題。 */
+function isBisectable(error) {
+  return error?.kind === 'alignment';
+}
+
+/** 根本沒拿到答案 → 跟段落內容無關，不該算在那一段頭上，也不值得拆小重試。 */
+function isInfrastructure(error) {
+  return error?.kind === 'timeout' || error?.kind === 'unreachable' || error?.kind === 'http';
 }
 
 const DEFAULT_BATCH_SIZE = 20;
@@ -162,19 +190,19 @@ function createOllamaClient({
         timedOut
           ? `ollama 超過 ${timeoutMs}ms 還沒回應（${pathname}）—— 模型可能正在冷啟動，或這一批太大`
           : `連不到 ollama（${root}）：${cause.message}`,
-        { cause },
+        { cause, kind: timedOut ? 'timeout' : 'unreachable' },
       );
     }
 
     if (!response.ok) {
-      throw new OllamaError(`ollama 回 HTTP ${response.status}（${pathname}）`);
+      throw new OllamaError(`ollama 回 HTTP ${response.status}（${pathname}）`, { kind: 'http' });
     }
 
     try {
       return await withTimeout(response.json(), timeoutMs, `ollama ${pathname} 讀取`);
     } catch (cause) {
       if (cause instanceof OllamaError) throw cause;
-      throw new OllamaError(`ollama 的回應讀不出來：${cause.message}`, { cause });
+      throw new OllamaError(`ollama 的回應讀不出來：${cause.message}`, { cause, kind: 'http' });
     }
   }
 
@@ -209,7 +237,9 @@ function createOllamaClient({
   async function translateBatch(texts, { targetLang, glossary = [] } = {}) {
     if (!Array.isArray(texts) || texts.length === 0) return [];
     if (texts.length > batchSize) {
-      throw new OllamaError(`一次最多 ${batchSize} 段（batchSize），拿到 ${texts.length} 段`);
+      throw new OllamaError(`一次最多 ${batchSize} 段（batchSize），拿到 ${texts.length} 段`, {
+        kind: 'http',
+      });
     }
 
     const payload = await call('/api/generate', {
@@ -241,6 +271,8 @@ module.exports = {
   createOllamaClient,
   parseBatchResult,
   withTimeout,
+  isBisectable,
+  isInfrastructure,
   OllamaError,
   AlignmentError,
   DEFAULT_BATCH_SIZE,

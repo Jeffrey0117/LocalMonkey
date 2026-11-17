@@ -12,6 +12,8 @@
  * 讓人工處理，不要無限重試一直燒 CPU。
  */
 
+const { isBisectable, isInfrastructure } = require('./ollama.js');
+
 const MAX_ATTEMPTS = 3;
 
 /**
@@ -27,36 +29,92 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
   let running = null;
   let stopped = false;
 
-  /** 一批：claim → 翻 → 寫快取 / 記失敗 */
-  async function runBatch(rows) {
-    const texts = rows.map((row) => row.source_text);
-
-    try {
-      const translated = await client.translateBatch(texts, {
-        targetLang: rows[0].target_lang,
-        glossary: rows[0].glossary ?? [],
+  function remember(rows, translated) {
+    // 寫入前再經過一次「manual 不准被覆蓋」的 SQL（db/translations.js）
+    for (const [index, row] of rows.entries()) {
+      store.translations.put({
+        hash: row.hash,
+        source_text: row.source_text,
+        target_lang: row.target_lang,
+        model: row.model,
+        translated: translated[index],
+        origin: 'machine',
       });
+    }
 
-      // 寫入前再經過一次「manual 不准被覆蓋」的 SQL（db/translations.js）
-      for (const [index, row] of rows.entries()) {
-        store.translations.put({
-          hash: row.hash,
-          source_text: row.source_text,
-          target_lang: row.target_lang,
-          model: row.model,
-          translated: translated[index],
-          origin: 'machine',
-        });
+    store.translateQueue.clear(rows.map((row) => row.hash));
+  }
+
+  /**
+   * 翻一塊，**對不上就二分**。
+   *
+   * ⛔ 為什麼不是「固定批次、整批重試三次」：實測（2026-11-18 對真的 templatemo）
+   * **20 段的批次，qwen2.5 回了 35 個 key**。規格的「批次 20」是從「10 段實測完美」
+   * 外推的，那個外推錯了。固定批次的語意是「19 個好段被 1 個壞段連坐」——
+   * 三輪之後那 19 段也一起被標成翻不動。
+   *
+   * 二分之後：20 → 2×10 → 4×5 → … → 單段。單段不可能數量對不上（送 1 回 1），
+   * 所以一定收斂，而且**只有真的有問題的那幾段**會掉到慢速路徑。
+   *
+   * 基礎設施壞掉（連不到 / HTTP 錯）**不二分**：那跟段落內容無關，拆小只是多等
+   * 幾次，而且要讓呼叫端整個收手。
+   *
+   * @returns {{ translated: number, failed: Array<object>, fatal: Error|null }}
+   */
+  async function translateChunk(rows) {
+    try {
+      const translated = await client.translateBatch(
+        rows.map((row) => row.source_text),
+        { targetLang: rows[0].target_lang, glossary: rows[0].glossary ?? [] },
+      );
+
+      remember(rows, translated);
+      return { translated: rows.length, failed: [], fatal: null };
+    } catch (error) {
+      if (isInfrastructure(error)) {
+        return { translated: 0, failed: rows, fatal: error };
       }
 
-      store.translateQueue.clear(rows.map((row) => row.hash));
-      return { translated: rows.length, failed: 0 };
-    } catch (error) {
-      // 對齊失敗與連不上都走這裡：一個字都不寫進快取，整批留在佇列
-      store.translateQueue.recordFailure(rows, error?.message ?? error);
-      logger.warn(`翻譯失敗（${rows.length} 段退回原文）：${error?.message ?? error}`);
-      return { translated: 0, failed: rows.length };
+      // 已經縮到單段還是失敗 → 就是這一段有問題，記在它頭上
+      if (rows.length === 1 || !isBisectable(error)) {
+        return { translated: 0, failed: rows, fatal: null, error };
+      }
+
+      const middle = Math.ceil(rows.length / 2);
+      const left = await translateChunk(rows.slice(0, middle));
+      // 左半邊踩到基礎設施問題就別再試右半邊了（只會多等一次逾時）
+      if (left.fatal) return { ...left, failed: [...left.failed, ...rows.slice(middle)] };
+
+      const right = await translateChunk(rows.slice(middle));
+
+      return {
+        translated: left.translated + right.translated,
+        failed: [...left.failed, ...right.failed],
+        fatal: right.fatal,
+        error: left.error ?? right.error,
+      };
     }
+  }
+
+  /** 一批：claim → 翻（必要時二分）→ 寫快取 / 記失敗 */
+  async function runBatch(rows) {
+    const result = await translateChunk(rows);
+
+    if (result.failed.length > 0) {
+      const reason = result.fatal ?? result.error;
+
+      // ⛔ 基礎設施壞掉不准燒掉段落的重試額度 —— 不然 ollama 關一小時，
+      //    整站的段落都會被標成「翻不動」，而那跟段落本身一點關係都沒有。
+      store.translateQueue.recordFailure(result.failed, reason?.message ?? reason, {
+        countAttempt: !isInfrastructure(reason),
+      });
+
+      logger.warn(
+        `翻譯失敗（${result.failed.length} 段退回原文）：${reason?.message ?? reason}`,
+      );
+    }
+
+    return { translated: result.translated, failed: result.failed.length, fatal: result.fatal };
   }
 
   /**
@@ -83,6 +141,13 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
       totals.batches += 1;
       totals.translated += result.translated;
       totals.failed += result.failed;
+
+      // ollama 整個連不上：這一輪收手。繼續跑只是對著同一個掛掉的服務重複等待，
+      // 而下一次 kick（頁面載入、UI 的「現在就翻」）本來就會重試。
+      if (result.fatal) {
+        logger.warn('翻譯服務連不上，這一輪先收手');
+        break;
+      }
 
       if (result.failed > 0) tried = [...tried, ...rows.map((row) => row.hash)];
     }

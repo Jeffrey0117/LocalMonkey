@@ -526,6 +526,10 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 - **ollama 沒開也不會壞。** 連不上時代理照常回原文，錯誤記在控制台的「翻譯」分頁。
 - **人工改過的永遠贏。** 在「翻譯」分頁直接改譯文，存檔後背景翻譯不會再蓋掉它
   （換模型也還在）。
+- **模型答錯會自己拆小重試。** 本地模型偶爾會答非所問（實測：送 20 段回了 35 個
+  答案）。遇到這種情形不會整批放棄，而是對半拆開重試，一路拆到單段 ——
+  **只有真的有問題的那一段會被標成「翻不動」，同一批的其他段照樣翻完。**
+  翻不動的段在「翻譯」分頁看得到，可以手動改或再試一次。
 - **術語不翻。** 每個站有自己的術語表（預設帶 `HTML`/`CSS`/`Bootstrap`/`React`/`API` 之類），
   整段剛好是術語就跳過，句子裡出現就告訴模型保留。
 - **不翻的東西**：`<script>` / `<style>` / `<pre>` / `<code>` / `<textarea>` / `<svg>` 的內容、
@@ -568,7 +572,7 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 | `LOCALMONKEY_GM_ALLOW_HOSTS` | *(空)* | 允許 `GM_xmlhttpRequest` 打的本機 `host:port`（精確比對，見上方說明） |
 | `LOCALMONKEY_OLLAMA_URL` | `http://127.0.0.1:11434` | 翻譯用的 ollama 位址 |
 | `LOCALMONKEY_TRANSLATE_MODEL` | `qwen2.5:latest` | 預設模型（每個站可以各自指定） |
-| `LOCALMONKEY_TRANSLATE_BATCH` | `20` | 一次送幾段給模型 |
+| `LOCALMONKEY_TRANSLATE_BATCH` | `20` | 一次送幾段給模型（對不上會自動二分，見下） |
 | `LOCALMONKEY_TRANSLATE_KEEPALIVE` | `30m` | 叫 ollama 把模型留在記憶體多久（太短就會一直吃冷啟動） |
 | `LOCALMONKEY_TRANSLATE_TIMEOUT_MS` | `120000` | 每一批的逾時 |
 | `LOCALMONKEY_CRAWL_POLITENESS_MS` | `500` | 預先翻譯整站時每個請求之間的間隔（**只准往上調**） |
@@ -666,11 +670,11 @@ GM shim 則是放進自己寫的假 DOM（`tests/support/dom.js`）**真的執�
 最近一次執行：
 
 ```
-ℹ tests 1014
-ℹ pass 1014
+ℹ tests 1026
+ℹ pass 1026
 ℹ fail 0
 
-ℹ all files         |  98.12 |    90.46 |   98.04 |
+ℹ all files         |  98.14 |    90.59 |   98.05 |
 ```
 
 （line % / branch % / funcs %）

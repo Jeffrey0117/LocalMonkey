@@ -67,7 +67,8 @@ function createStore(db) {
       enqueue: (input) => translations.enqueueSegments(db, input),
       claim: (options) => translations.claimQueue(db, options),
       clear: (hashes) => translations.clearQueue(db, hashes),
-      recordFailure: (rows, error) => translations.recordQueueFailure(db, rows, error),
+      recordFailure: (rows, error, options) =>
+        translations.recordQueueFailure(db, rows, error, options),
       stats: (options) => translations.queueStats(db, options),
       listFailed: (options) => translations.listFailedQueue(db, options),
       remove: (hash) => translations.removeQueueEntry(db, hash),
