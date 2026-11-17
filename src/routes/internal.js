@@ -37,8 +37,26 @@ function sendNotFound(res, message) {
   res.status(404).type('text/plain; charset=utf-8').send(message);
 }
 
-function createInternalRouter({ store }) {
+function createInternalRouter({ store, favicons }) {
   const router = express.Router();
+
+  /**
+   * 站點 favicon（後台列表用）。**永遠回 200 的一張圖** —— 抓不到、站不存在、
+   * 被 SSRF 擋下來都回內建的佔位 SVG。列表一次畫十幾個站，破圖與 console 錯誤
+   * 比沒有圖示難看得多。抓取與快取的政策在 services/favicon.js。
+   */
+  router.get('/favicon/:siteId', async (req, res, next) => {
+    try {
+      const { content, contentType } = await favicons.resolve(req.params.siteId);
+
+      res.setHeader('content-type', contentType);
+      res.setHeader('x-content-type-options', 'nosniff');
+      res.setHeader('cache-control', 'private, max-age=600');
+      res.end(content);
+    } catch (error) {
+      next(error);
+    }
+  });
 
   router.get('/script/:scriptFile', (req, res) => {
     const { scriptFile } = req.params;

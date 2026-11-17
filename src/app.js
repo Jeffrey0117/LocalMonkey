@@ -7,6 +7,7 @@ const { createGmXhrRouter } = require('./routes/gm-xhr.js');
 const { createDeliveryRouter } = require('./routes/delivery.js');
 const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
+const { createFaviconService } = require('./services/favicon.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
 
@@ -40,8 +41,11 @@ function createApp({ store, config, adminToken, logger = silentLogger, fetchImpl
 
   // 保留路徑：不進代理。
   // gm/xhr 要排在 internal 之前 —— internal router 的尾巴是 catch-all 404。
+  // 後台列表的站點圖示。快取在這個 service 的 instance 裡，所以要跟 app 同壽命。
+  const favicons = createFaviconService({ store, config, fetchImpl, lookup: config.lookup });
+
   app.use('/__lm/gm', createGmXhrRouter({ store, config, logger, fetchImpl }));
-  app.use('/__lm', createInternalRouter({ store }));
+  app.use('/__lm', createInternalRouter({ store, favicons }));
   app.use('/admin', createAdminRouter({ store, config, adminToken, logger, fetchImpl }));
 
   // 投遞給 Tampermonkey。免認證（憑證是路徑裡的 token），要排在代理的 catch-all 之前。
