@@ -4,6 +4,8 @@ const sites = require('./sites.js');
 const scripts = require('./scripts.js');
 const userscripts = require('./userscripts.js');
 const assets = require('./assets.js');
+const translations = require('./translations.js');
+const crawlJobs = require('./crawl-jobs.js');
 
 /**
  * 把 repository 函式綁上同一個 db handle，路由層就不用到處傳 db。
@@ -49,6 +51,34 @@ function createStore(db) {
       put: (input) => assets.putAsset(db, input),
       get: (sha256) => assets.getAsset(db, sha256),
       findByUrl: (url) => assets.findAssetByUrl(db, url),
+    },
+
+    /* v4：翻譯快取（主幹）與待翻佇列 */
+    translations: {
+      get: (hash) => translations.getTranslation(db, hash),
+      put: (input) => translations.putTranslation(db, input),
+      setManual: (hash, input) => translations.setManualTranslation(db, hash, input),
+      remove: (hash) => translations.removeTranslation(db, hash),
+      lookup: (input) => translations.lookupTranslations(db, input),
+      list: (options) => translations.listTranslations(db, options),
+      count: () => translations.countTranslations(db),
+    },
+    translateQueue: {
+      enqueue: (input) => translations.enqueueSegments(db, input),
+      claim: (options) => translations.claimQueue(db, options),
+      clear: (hashes) => translations.clearQueue(db, hashes),
+      recordFailure: (rows, error) => translations.recordQueueFailure(db, rows, error),
+      stats: (options) => translations.queueStats(db, options),
+      listFailed: (options) => translations.listFailedQueue(db, options),
+      remove: (hash) => translations.removeQueueEntry(db, hash),
+    },
+    crawlJobs: {
+      create: (input) => crawlJobs.createCrawlJob(db, input),
+      get: (id) => crawlJobs.getCrawlJob(db, id),
+      update: (id, patch) => crawlJobs.updateCrawlJob(db, id, patch),
+      listBySite: (siteId, options) => crawlJobs.listCrawlJobsBySite(db, siteId, options),
+      latestForSite: (siteId) => crawlJobs.latestCrawlJobForSite(db, siteId),
+      bump: (id, counters) => crawlJobs.bumpCrawlJob(db, id, counters),
     },
   };
 }

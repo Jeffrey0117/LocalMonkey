@@ -2,8 +2,21 @@
 
 const { DuplicateIdError, NotFoundError } = require('./errors.js');
 const { nowIso } = require('../lib/ids.js');
+const { parseGlossary, serializeGlossary } = require('../translate/glossary.js');
 
-const UPDATABLE_COLUMNS = Object.freeze(['name', 'target_origin', 'enabled']);
+const UPDATABLE_COLUMNS = Object.freeze([
+  'name',
+  'target_origin',
+  'enabled',
+  // v4：伺服器端翻譯層（SPEC-translate §2）
+  'translate_enabled',
+  'translate_lang',
+  'translate_model',
+  'glossary',
+]);
+
+/** 存成 0/1 的欄位（SQLite 沒有 boolean） */
+const FLAG_COLUMNS = new Set(['enabled', 'translate_enabled']);
 
 function toFlag(value) {
   return value === true || value === 1 ? 1 : 0;
@@ -19,6 +32,12 @@ function mapRow(row) {
     enabled: row.enabled === 1,
     auto_created: row.auto_created === 1,
     from_pattern: row.from_pattern,
+    translate_enabled: row.translate_enabled === 1,
+    translate_lang: row.translate_lang,
+    // NULL = 用全域預設（規格 §2）。這裡原樣轉述，不在 DB 層套預設值 ——
+    // 不然 UI 分不出「使用者選了這個模型」與「跟著全域走」。
+    translate_model: row.translate_model,
+    glossary: parseGlossary(row.glossary),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -86,13 +105,12 @@ function updateSite(db, id, patch) {
   const columns = UPDATABLE_COLUMNS.filter((column) => column in patch);
   if (columns.length === 0) throw new Error('沒有可更新的欄位');
 
-  const params = columns.reduce(
-    (acc, column) => ({
-      ...acc,
-      [column]: column === 'enabled' ? toFlag(patch.enabled) : patch[column],
-    }),
-    { id, updated_at: nowIso() },
-  );
+  const params = columns.reduce((acc, column) => {
+    if (FLAG_COLUMNS.has(column)) return { ...acc, [column]: toFlag(patch[column]) };
+    // glossary 欄位存 JSON 陣列（跟 script_sites.exclude_glob 同一個做法）
+    if (column === 'glossary') return { ...acc, glossary: serializeGlossary(patch.glossary) };
+    return { ...acc, [column]: patch[column] };
+  }, { id, updated_at: nowIso() });
 
   const assignments = [...columns, 'updated_at'].map((column) => `${column} = @${column}`);
   const result = db

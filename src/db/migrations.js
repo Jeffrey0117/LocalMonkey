@@ -174,6 +174,69 @@ function upgradeToV3(db) {
   }
 }
 
+/**
+ * v4：伺服器端翻譯層（SPEC-translate §2）。
+ *
+ * `translations` 是整個設計的主幹而不是優化 —— 靜態內容不常變，所以
+ * 翻一次就永久有效。`hash` 含 model，**換模型會自動重翻**，舊的留著不刪
+ * （可以比較、可以回退）。
+ *
+ * `translate_queue.site_id` **刻意不是外鍵**：那個欄位只為了 UI 分組
+ * （「哪個站先遇到這段」），刪掉一個網站不該連帶砍掉待翻的段 ——
+ * 而且 `INSERT OR IGNORE` 會把外鍵違規一起吞掉（地雷 15），
+ * 沒有外鍵的話那個 IGNORE 就只可能是「PK 撞到」，語意乾淨。
+ */
+const SCHEMA_V4 = `
+CREATE TABLE translations (
+  hash        TEXT PRIMARY KEY,
+  source_text TEXT NOT NULL,
+  target_lang TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  translated  TEXT NOT NULL,
+  origin      TEXT NOT NULL CHECK (origin IN ('machine', 'manual')),
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE translate_queue (
+  hash        TEXT PRIMARY KEY,
+  source_text TEXT NOT NULL,
+  target_lang TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  site_id     TEXT,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  last_error  TEXT,
+  created_at  TEXT NOT NULL
+);
+
+CREATE TABLE crawl_jobs (
+  id           TEXT PRIMARY KEY,
+  site_id      TEXT NOT NULL,
+  status       TEXT NOT NULL
+                 CHECK (status IN ('running', 'paused', 'done', 'failed', 'cancelled')),
+  start_path   TEXT NOT NULL,
+  max_pages    INTEGER NOT NULL,
+  max_depth    INTEGER NOT NULL,
+  pages_done   INTEGER NOT NULL DEFAULT 0,
+  pages_found  INTEGER NOT NULL DEFAULT 0,
+  segments_new INTEGER NOT NULL DEFAULT 0,
+  last_error   TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+ALTER TABLE sites ADD COLUMN translate_enabled INTEGER NOT NULL DEFAULT 0
+  CHECK (translate_enabled IN (0, 1));
+ALTER TABLE sites ADD COLUMN translate_lang TEXT NOT NULL DEFAULT 'zh-TW';
+ALTER TABLE sites ADD COLUMN translate_model TEXT;
+ALTER TABLE sites ADD COLUMN glossary TEXT;
+
+CREATE INDEX idx_translations_lookup  ON translations (target_lang, source_text);
+CREATE INDEX idx_translations_updated ON translations (updated_at DESC, hash);
+CREATE INDEX idx_queue_attempts       ON translate_queue (attempts, created_at);
+CREATE INDEX idx_crawl_jobs_site      ON crawl_jobs (site_id, created_at DESC);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -186,6 +249,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 3,
     up: upgradeToV3,
+  }),
+  Object.freeze({
+    version: 4,
+    up: (db) => db.exec(SCHEMA_V4),
   }),
 ]);
 
