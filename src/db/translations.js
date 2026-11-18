@@ -209,6 +209,18 @@ function listTranslations(db, { query, origin, limit = 100, offset = 0 } = {}) {
     .map((row) => mapRow(row));
 }
 
+/**
+ * 全掃。給「要看每一段內容」的工作用（例如 SPEC-rules §5.1 的簡體偵測）。
+ *
+ * 用 `iterate()` 而不是 `all()`：快取是會長大的（靜態站一次幾百段），
+ * 一次全載進記憶體只為了過濾幾段沒道理。
+ */
+function* iterateTranslations(db) {
+  const statement = db.prepare('SELECT * FROM translations ORDER BY updated_at DESC, hash');
+
+  for (const row of statement.iterate()) yield mapRow(row);
+}
+
 function countTranslations(db) {
   const row = db
     .prepare(
@@ -362,6 +374,7 @@ module.exports = {
   removeTranslation,
   lookupTranslations,
   listTranslations,
+  iterateTranslations,
   countTranslations,
   enqueueSegments,
   claimQueue,

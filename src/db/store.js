@@ -63,6 +63,7 @@ function createStore(db) {
       remove: (hash) => translations.removeTranslation(db, hash),
       lookup: (input) => translations.lookupTranslations(db, input),
       list: (options) => translations.listTranslations(db, options),
+      iterate: () => translations.iterateTranslations(db),
       count: () => translations.countTranslations(db),
     },
     translateQueue: {

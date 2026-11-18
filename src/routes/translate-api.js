@@ -12,6 +12,7 @@ const express = require('express');
 
 const { validateManualTranslation, validateCrawlRequest } = require('../lib/validate.js');
 const { translationHash } = require('../translate/cache.js');
+const { findSimplified } = require('../translate/simplified.js');
 const { CrawlError } = require('../translate/crawl.js');
 
 function sendValidationFailed(res, result) {
@@ -129,6 +130,71 @@ function createTranslateApiRouter({ store, translation, crawler, logger }) {
       return;
     }
     res.status(204).end();
+  });
+
+  /* --------------------- 掃出快取裡的簡體（SPEC-rules §5.1） --------------------- */
+
+  /**
+   * v4 的 prompt 後來才加上「禁止簡體字」，但**加之前翻的那些還在快取裡**，
+   * 而快取是永久的 —— 不掃出來重翻的話它們永遠不會自己好。
+   *
+   * 偵測在 `translate/simplified.js`（對照表是產生出來的，不是手寫的 ——
+   * 手寫的第一版漏字，害「掃出 0 段」變成假答案）。
+   */
+  router.get('/translate/simplified', (req, res) => {
+    const entries = [];
+    let manual = 0;
+
+    for (const entry of store.translations.iterate()) {
+      const chars = findSimplified(entry.translated);
+      if (chars.length === 0) continue;
+
+      if (entry.origin === 'manual') manual += 1;
+      entries.push({
+        hash: entry.hash,
+        source_text: entry.source_text,
+        translated: entry.translated,
+        target_lang: entry.target_lang,
+        model: entry.model,
+        origin: entry.origin,
+        chars,
+      });
+    }
+
+    res.json({ entries, total: entries.length, manual, cache: store.translations.count() });
+  });
+
+  /**
+   * 一鍵全部重翻。
+   *
+   * ⛔ 預設**跳過人工覆寫**：那是使用者自己打的字，砍掉它是不可逆的。
+   * 真的要連人工的一起重翻，就明確帶 `includeManual: true`。
+   */
+  router.post('/translate/simplified/retranslate', (req, res) => {
+    const includeManual = req.body?.includeManual === true;
+
+    const targets = [...store.translations.iterate()].filter(
+      (entry) =>
+        findSimplified(entry.translated).length > 0 &&
+        (includeManual || entry.origin !== 'manual'),
+    );
+
+    for (const entry of targets) {
+      // 先刪再排：`putTranslation` 的 `WHERE origin <> 'manual'` 會把
+      // 人工覆寫的新譯文擋掉（跟單段重翻同一個理由）
+      store.translations.remove(entry.hash);
+      store.translateQueue.remove(entry.hash);
+      store.translateQueue.enqueue({
+        texts: [entry.source_text],
+        targetLang: entry.target_lang,
+        model: entry.model,
+        siteId: null,
+      });
+    }
+
+    if (targets.length > 0) translation.queue.kick();
+
+    res.json({ queued: targets.length, queue: store.translateQueue.stats() });
   });
 
   /** 讓使用者手動推一把（UI 的「現在就翻」）*/
