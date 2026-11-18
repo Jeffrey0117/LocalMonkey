@@ -40,7 +40,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1026 個測試
+npm test             # node:test，1037 個測試
 npm run test:coverage
 ```
 
@@ -488,6 +488,18 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
     `admin-api.js`，但 `admin-page.js` 的 `createAdminRouter` 沒把 `crawler` 往下傳 →
     `if (translation && crawler)` 不成立 → **所有 `/crawl` 端點靜默 404**。
     加新依賴時 `app.js` → `admin-page.js` → `admin-api.js` 三層都要改。
+40. **⛔ 「跑完一輪再排下一輪」解決不了「誰來開始第一輪」。**
+    佇列存在 DB 裡，所以它活過重啟。我先做了「一輪結束後若還有待翻就排重試」，
+    然後重現使用者的卡住狀態、起 server、**四分鐘完全不動** —— 因為從來沒有
+    第一輪。`queue.resume()`（在 `createTranslationService` 裡呼叫）才是解法。
+    任何「做完 A 之後接著做 B」的鏈條，都要另外問一次「**A 第一次是誰觸發的**」。
+41. **同一個專案裡 `unref()` 有兩種相反的正確答案。** 佇列的重試計時器**要**
+    unref（伺服器有 HTTP handle 撐著，但測試與 CLI 不該被它吊住）；ollama 的逾時
+    計時器**不准** unref（那時候正好沒有別的東西撐著 event loop，unref 了就不會醒）。
+    判準是「這個計時器該醒的時候，還有別的東西撐著 event loop 嗎」。
+42. **叫模型寫「繁體中文」不夠，要把「禁止簡體字」講死。** 使用者快取的 85 段裡
+    有 1 段是簡繁混雜（「發現超过620个免费的…」），而中招的剛好是首頁最大那塊文案。
+    加一條規則之後，同一段實測 3/3 全繁體。
 
 ---
 

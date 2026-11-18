@@ -26,6 +26,7 @@ const DEFAULTS = Object.freeze({
   translateKeepAlive: '30m',
   translateTimeoutMs: 120_000,
   crawlPolitenessMs: 500,
+  translateRetryDelayMs: 30_000,
 });
 
 function parseInteger(raw, fallback, { min, max }) {
@@ -142,6 +143,14 @@ function loadConfig(env = process.env) {
 
       // ⛔ 爬蟲是在打**別人的**伺服器。規格 §6 要求每個請求之間至少 500ms，
       // 所以這個值只准往上調 —— 往下調就是把功能變成壓測工具。
+      // 一輪跑完但還有做得動的段時，隔多久自己再試一次
+      // （二分讓失敗變少，但沒解決「誰來開始下一輪」—— 使用者不再開頁面就沒有下一輪）
+      retryDelayMs: parseInteger(
+        env.LOCALMONKEY_TRANSLATE_RETRY_MS,
+        DEFAULTS.translateRetryDelayMs,
+        { min: 1_000, max: 3_600_000 },
+      ),
+
       crawlPolitenessMs: parseInteger(
         env.LOCALMONKEY_CRAWL_POLITENESS_MS,
         DEFAULTS.crawlPolitenessMs,

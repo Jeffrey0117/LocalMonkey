@@ -548,6 +548,235 @@ test('單段的對齊失敗才會累加 attempts，三次之後不再重試', as
   assert.equal(store.translateQueue.stats().failed, 1);
 });
 
+/* ------------------- 「卡在最後 20 段」的回歸測試 ------------------- */
+
+/**
+ * 團隊 2026-11-18 在使用者環境實測到的狀態：
+ *
+ * ```
+ * 待翻 85 → 65 → 45 → 20 → 20 → 20 …（不再變動）
+ * translate_queue: attempts=1, 20 段
+ * last_error: 數量對不上：送了 20 段，回來 35 段
+ * ```
+ *
+ * 這一支從**那個狀態**開始跑（佇列裡已經有 attempts=1 的段），
+ * 證明下一輪會重新納入它們、走二分、最後清空。
+ */
+test('⛔ 從「20 段卡在 attempts=1」的狀態開始，下一輪要重新納入並清空', async (t) => {
+  const store = storeWith(t);
+  const stuck = texts(20, 'Stuck');
+
+  store.translateQueue.enqueue({
+    texts: stuck,
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  // 重現上一輪的結果：整批失敗一次，attempts 停在 1
+  store.translateQueue.recordFailure(
+    store.translateQueue.claim({ limit: 20 }),
+    '模型回的內容對不上，整批退回原文：數量對不上：送了 20 段，回來 35 段',
+  );
+
+  const before = store.translateQueue.claim({ limit: 20 });
+  assert.equal(before.length, 20, '前提：20 段都還在佇列裡');
+  assert.deepEqual(before.map((row) => row.attempts), before.map(() => 1));
+
+  // 新的一輪：批次 20 還是會對不上，但二分之後就過了
+  const client = pickyClient({ maxAligned: 5 });
+  const result = await queueWith(store, client, { batchSize: 20 }).drain();
+
+  assert.equal(result.translated, 20, '卡住的 20 段要在這一輪全部翻完');
+  assert.equal(store.translateQueue.stats().total, 0, '待翻要歸零');
+  assert.equal(store.translations.count().total, 20);
+});
+
+test('⛔ exclude 只在「這一輪」有效，不是永久排除', async (t) => {
+  const store = storeWith(t);
+  const client = pickyClient({ maxAligned: 0 });
+
+  store.translateQueue.enqueue({
+    texts: texts(2),
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  const queue = queueWith(store, client, { batchSize: 2 });
+
+  await queue.drain();
+  const afterFirst = client.batches.length;
+  assert.ok(afterFirst > 0);
+
+  // 第二輪要重新試同樣那幾段（attempts 還沒滿）
+  await queue.drain();
+  assert.ok(client.batches.length > afterFirst, '第二輪完全沒碰那些段＝被永久排除了');
+});
+
+/* ------------------------- 自己重試（收尾的那一步） ------------------------- */
+
+/**
+ * ⛔ 二分讓失敗變少，但沒解決「**誰來開始下一輪**」。
+ *
+ * 實測到的使用者症狀是「永遠差 20 段」：那些段的 attempts 還沒滿、下一輪會
+ * 重新納入 —— 但如果使用者不再載入任何頁面，就**沒有下一輪**。
+ * 佇列結束時只要還有做得動的工作，就要自己排一次重試。
+ */
+
+function waitUntil(condition, { timeoutMs = 3_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+
+  return new Promise((resolve, reject) => {
+    const tick = () => {
+      if (condition()) return resolve();
+      if (Date.now() > deadline) return reject(new Error('等不到條件成立'));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+}
+
+test('⛔ 一輪結束後還有待翻的段 → 自己排下一輪（不必等使用者重新載入頁面）', async (t) => {
+  const store = storeWith(t);
+
+  // 前兩輪對不上，第三輪開始正常 —— 模擬「下一次就過了」的真實情形
+  let rounds = 0;
+  const client = {
+    model: MODEL,
+    batchSize: 2,
+    batches: [],
+    async translateBatch(list) {
+      this.batches.push([...list]);
+      rounds += 1;
+      if (rounds <= 2) throw new AlignmentError('數量對不上');
+      return list.map((text) => `[${text}]`);
+    },
+  };
+
+  const queue = queueWith(store, client, { batchSize: 2, retryDelayMs: 20 });
+  t.after(() => queue.stop());
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  await queue.drain();
+  assert.equal(store.translateQueue.stats().pending, 1, '第一輪沒翻成功');
+
+  // 沒有任何人再 kick，佇列要自己把它做完
+  await waitUntil(() => store.translateQueue.stats().total === 0);
+  assert.equal(store.translations.count().total, 1);
+});
+
+/**
+ * ⛔ 這一條是實測打臉之後補的。
+ *
+ * 「跑完一輪再排下一輪」只在**已經跑過一輪**的前提下成立。
+ * 重開伺服器之後佇列裡還有上次沒翻完的段時，根本沒有人開始第一輪 ——
+ * 實測：重現使用者的「卡住 20 段」狀態、起 server、四分鐘完全不動。
+ * 佇列是會留在 DB 裡的，所以它必須**在啟動時自己接回去**。
+ */
+test('⛔ 啟動時佇列裡還有上次沒翻完的段 → 自己接回去跑（不必等使用者開頁面）', async (t) => {
+  const store = storeWith(t);
+
+  // 模擬「上次關機前沒翻完」：先把段放進佇列，之後才建立 queue
+  store.translateQueue.enqueue({
+    texts: ['Leftover one', 'Leftover two'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  const client = fakeClient();
+  const queue = queueWith(store, client, { batchSize: 2, retryDelayMs: 20 });
+  t.after(() => queue.stop());
+
+  queue.resume();
+
+  await waitUntil(() => store.translateQueue.stats().total === 0);
+  assert.equal(store.translations.count().total, 2);
+});
+
+test('啟動時佇列是空的就什麼都不做（不要為了沒有的工作去打 ollama）', async (t) => {
+  const store = storeWith(t);
+  const client = fakeClient();
+  const queue = queueWith(store, client, { retryDelayMs: 10 });
+  t.after(() => queue.stop());
+
+  queue.resume();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.equal(client.batches.length, 0);
+});
+
+test('佇列清空之後不再排重試（不要留一個永遠在跑的計時器）', async (t) => {
+  const store = storeWith(t);
+  const client = fakeClient();
+  const queue = queueWith(store, client, { retryDelayMs: 10 });
+  t.after(() => queue.stop());
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  await queue.drain();
+  const afterDrain = client.batches.length;
+
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(client.batches.length, afterDrain, '沒事做就不該再叫 ollama');
+});
+
+test('⛔ attempts 滿了的段不會害佇列一直空轉重試', async (t) => {
+  const store = storeWith(t);
+  const client = pickyClient({ maxAligned: 0 });
+  const queue = queueWith(store, client, { batchSize: 1, retryDelayMs: 10 });
+  t.after(() => queue.stop());
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  // 第一輪由 kick 開始，之後靠自己重試；三次失敗之後它就該安靜下來
+  await queue.drain();
+  await waitUntil(() => store.translateQueue.stats().failed === 1, { timeoutMs: 5_000 });
+
+  const settled = client.batches.length;
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  assert.equal(client.batches.length, settled, 'attempts 滿了還在重試＝空轉');
+});
+
+test('stop() 之後排好的重試不會再跑（關機 / 測試收尾）', async (t) => {
+  const store = storeWith(t);
+  const client = pickyClient({ maxAligned: 0 });
+  const queue = queueWith(store, client, { batchSize: 1, retryDelayMs: 20 });
+
+  store.translateQueue.enqueue({
+    texts: ['Alpha one'],
+    targetLang: 'zh-TW',
+    model: MODEL,
+    siteId: 'demo',
+  });
+
+  await queue.drain();
+  queue.stop();
+
+  const atStop = client.batches.length;
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  assert.equal(client.batches.length, atStop);
+});
+
 /* ---------------------------- 併發與收尾 ---------------------------- */
 
 test('⛔ 序列化：同時 kick 兩次只會有一條在跑（ollama 本來就不併行）', async (t) => {

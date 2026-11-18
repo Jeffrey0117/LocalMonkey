@@ -70,6 +70,7 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
     client: ollama,
     logger,
     batchSize: settings.batchSize ?? 20,
+    ...(settings.retryDelayMs ? { retryDelayMs: settings.retryDelayMs } : {}),
   });
 
   /**
@@ -141,6 +142,9 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
       },
     };
   }
+
+  // 佇列活在 DB 裡，所以它會活過重啟 —— 啟動時把上次沒翻完的段接回去
+  queue.resume();
 
   return { translateHtml, status, queue, client: ollama, settingsFor: (site) => settingsFor(site, config) };
 }

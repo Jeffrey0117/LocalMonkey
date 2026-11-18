@@ -62,6 +62,26 @@ test('⛔ prompt 裡的原文一律走 JSON.stringify（引號 / 換行 / 反斜
   });
 });
 
+test('⛔ 目標是繁體中文時要明確禁止簡體字', () => {
+  // 實測（使用者的快取 85 段裡有 1 段）：qwen2.5 偶爾會吐出簡繁混雜的句子，
+  // 而且中招的剛好是首頁最大那段文案 ——「發現超过620个免费的…」
+  const prompt = buildPrompt(['Discover 620+ free templates'], { targetLang: 'zh-TW' });
+
+  assert.match(prompt, /簡體/);
+  assert.match(prompt, /正體|繁體/);
+});
+
+test('目標不是中文時不要塞中文的用字規則（白佔 context）', () => {
+  assert.equal(/簡體/.test(buildPrompt(['x'], { targetLang: 'ja' })), false);
+  assert.equal(/簡體/.test(buildPrompt(['x'], { targetLang: 'en' })), false);
+});
+
+test('簡體中文的目標語言不會被叫去寫繁體', () => {
+  const prompt = buildPrompt(['x'], { targetLang: 'zh-CN' });
+
+  assert.equal(/禁止.*簡體|不要.*簡體/.test(prompt), false);
+});
+
 test('prompt 明確交代「不要加解釋」與「key 要一模一樣」（錯位的主要來源）', () => {
   const prompt = buildPrompt(['x'], { targetLang: 'zh-TW' });
 

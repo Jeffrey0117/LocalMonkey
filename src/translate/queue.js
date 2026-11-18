@@ -17,6 +17,15 @@ const { isBisectable, isInfrastructure } = require('./ollama.js');
 const MAX_ATTEMPTS = 3;
 
 /**
+ * 一輪跑完、但還有做得動的段時，隔多久自己再試一次。
+ *
+ * ⛔ 為什麼需要這個：二分讓失敗變少，但沒解決「**誰來開始下一輪**」。
+ * 實測到的使用者症狀是「永遠差 20 段」—— 那些段的 attempts 還沒滿、下一輪
+ * 會重新納入，但如果使用者不再載入任何頁面，就沒有下一輪。
+ */
+const RETRY_DELAY_MS = 30_000;
+
+/**
  * @param {{
  *   store: object,
  *   client: { translateBatch: Function, model: string },
@@ -25,9 +34,17 @@ const MAX_ATTEMPTS = 3;
  *   maxAttempts?: number,
  * }} context
  */
-function createTranslationQueue({ store, client, logger, batchSize = 20, maxAttempts = MAX_ATTEMPTS }) {
+function createTranslationQueue({
+  store,
+  client,
+  logger,
+  batchSize = 20,
+  maxAttempts = MAX_ATTEMPTS,
+  retryDelayMs = RETRY_DELAY_MS,
+}) {
   let running = null;
   let stopped = false;
+  let retryTimer = null;
 
   function remember(rows, translated) {
     // 寫入前再經過一次「manual 不准被覆蓋」的 SQL（db/translations.js）
@@ -156,6 +173,29 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
   }
 
   /**
+   * 這一輪結束了，但還有「做得動」的段 → 自己排下一輪。
+   *
+   * 「做得動」的定義是 `attempts < maxAttempts`：已經標成翻不動的段不算，
+   * 不然佇列會對著永遠失敗的那幾段空轉。
+   *
+   * ⛔ 計時器要 `unref()`：伺服器本來就有 HTTP handle 撐著 event loop，
+   * 但測試與一次性 CLI 不該被一個背景計時器吊住不結束。
+   * （這跟 ollama 的逾時計時器**剛好相反** —— 那支不准 unref，因為那時候
+   * 正好沒有別的東西撐著，unref 了就不會醒。）
+   */
+  function scheduleRetry() {
+    if (stopped || retryTimer !== null) return;
+    if (store.translateQueue.claim({ limit: 1, maxAttempts }).length === 0) return;
+
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (!stopped) kick();
+    }, retryDelayMs);
+
+    retryTimer.unref?.();
+  }
+
+  /**
    * 把佇列跑到空（或跑到所有剩下的都沒有重試額度）。
    * 同時呼叫兩次只會有一條在跑 —— 第二個拿到同一個 promise。
    */
@@ -170,6 +210,7 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
       })
       .finally(() => {
         running = null;
+        scheduleRetry();
       });
 
     return running;
@@ -185,11 +226,34 @@ function createTranslationQueue({ store, client, logger, batchSize = 20, maxAtte
     return running ?? Promise.resolve({ batches: 0, translated: 0, failed: 0 });
   }
 
-  function stop() {
-    stopped = true;
+  /**
+   * 啟動時把「上次沒翻完的段」接回去。
+   *
+   * ⛔ 佇列是存在 DB 裡的，所以它會活過重啟 —— 而 `scheduleRetry` 只在
+   * 「跑完一輪之後」才會接下一輪。少了這支，重開 server 之後那些段
+   * **永遠不會被碰**，直到有人剛好載入一次頁面（實測：四分鐘完全不動）。
+   *
+   * 佇列空的時候是 no-op，所以不會為了沒有的工作去打 ollama。
+   */
+  function resume() {
+    if (stopped) return false;
+    if (store.translateQueue.claim({ limit: 1, maxAttempts }).length === 0) return false;
+
+    logger.info('佇列裡還有上次沒翻完的段，接回去繼續');
+    kick();
+    return true;
   }
 
-  return { drain, kick, idle, stop, isRunning: () => running !== null, maxAttempts };
+  function stop() {
+    stopped = true;
+
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  }
+
+  return { drain, kick, idle, stop, resume, isRunning: () => running !== null, maxAttempts };
 }
 
-module.exports = { createTranslationQueue, MAX_ATTEMPTS };
+module.exports = { createTranslationQueue, MAX_ATTEMPTS, RETRY_DELAY_MS };

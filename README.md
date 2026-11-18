@@ -524,6 +524,7 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 - **請求路徑絕不等模型。** 代理只查一次 SQLite；沒翻過的段**保留原文**並丟進背景佇列。
   第一次看到部分英文是**預期行為**。
 - **ollama 沒開也不會壞。** 連不上時代理照常回原文，錯誤記在控制台的「翻譯」分頁。
+  等它活過來之後，沒翻完的段會自己繼續（不必重新載入頁面，重開 LocalMonkey 也會接回去）。
 - **人工改過的永遠贏。** 在「翻譯」分頁直接改譯文，存檔後背景翻譯不會再蓋掉它
   （換模型也還在）。
 - **模型答錯會自己拆小重試。** 本地模型偶爾會答非所問（實測：送 20 段回了 35 個
@@ -575,6 +576,7 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 | `LOCALMONKEY_TRANSLATE_BATCH` | `20` | 一次送幾段給模型（對不上會自動二分，見下） |
 | `LOCALMONKEY_TRANSLATE_KEEPALIVE` | `30m` | 叫 ollama 把模型留在記憶體多久（太短就會一直吃冷啟動） |
 | `LOCALMONKEY_TRANSLATE_TIMEOUT_MS` | `120000` | 每一批的逾時 |
+| `LOCALMONKEY_TRANSLATE_RETRY_MS` | `30000` | 還有沒翻完的段時，隔多久自己再試一次 |
 | `LOCALMONKEY_CRAWL_POLITENESS_MS` | `500` | 預先翻譯整站時每個請求之間的間隔（**只准往上調**） |
 
 ⚠️ **翻譯的呼叫不受 `LOCALMONKEY_ALLOW_PRIVATE` 影響，也不要為了它去打開那個開關。**
@@ -670,11 +672,11 @@ GM shim 則是放進自己寫的假 DOM（`tests/support/dom.js`）**真的執�
 最近一次執行：
 
 ```
-ℹ tests 1026
-ℹ pass 1026
+ℹ tests 1037
+ℹ pass 1037
 ℹ fail 0
 
-ℹ all files         |  98.14 |    90.59 |   98.05 |
+ℹ all files         |  98.12 |    90.53 |   98.06 |
 ```
 
 （line % / branch % / funcs %）

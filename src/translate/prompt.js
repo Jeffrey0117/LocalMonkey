@@ -21,6 +21,9 @@ const LANGUAGE_NAMES = Object.freeze({
 
 const DEFAULT_LANG = 'zh-TW';
 
+/** 這些目標語言要額外把「不准用簡體字」講死（見 buildPrompt 的註解） */
+const TRADITIONAL_LANGS = new Set(['zh-TW', 'zh-HK']);
+
 function languageName(targetLang) {
   return LANGUAGE_NAMES[targetLang] ?? targetLang;
 }
@@ -47,6 +50,15 @@ function buildPrompt(texts, { targetLang = DEFAULT_LANG, glossary = [] } = {}) {
   const payload = JSON.stringify(payloadFor(texts), null, 1);
   const keys = texts.map((unused, index) => `"${index}"`).join('、');
 
+  /**
+   * ⛔ 繁體要講死。實測：使用者快取的 85 段裡有 1 段是簡繁混雜
+   * （「發現超过620个免费的…」），而中招的剛好是首頁最大那塊文案。
+   * 模型知道「繁體中文」這四個字，但不講死就會混進簡體字。
+   */
+  const traditional = TRADITIONAL_LANGS.has(targetLang)
+    ? ['6. 必須全部使用台灣慣用的正體（繁體）中文，禁止出現任何簡體字。']
+    : [];
+
   return [
     `把下面 JSON 物件裡每一個 value 翻成${language}。`,
     '',
@@ -56,6 +68,7 @@ function buildPrompt(texts, { targetLang = DEFAULT_LANG, glossary = [] } = {}) {
     '3. 維持原本的大小寫風格與標點；數字、網址、email、程式碼不要動。',
     '4. 這些是網頁 UI 上的字，請用網頁上習慣的說法（簡短、自然）。',
     '5. 只回 JSON，不要加任何說明、註解或 markdown 標記。',
+    ...traditional,
     keepLine,
     '原文：',
     payload,
