@@ -17,6 +17,7 @@ const { assertOriginAllowed, SsrfBlockedError } = require('../lib/ssrf.js');
 const { DuplicateIdError, NotFoundError } = require('../db/errors.js');
 const { parseUserscript } = require('../userscript/parse.js');
 const { createTranslateApiRouter } = require('./translate-api.js');
+const { createRulesApiRouter } = require('./rules-api.js');
 const { deployUserscript, DeployError } = require('../services/deploy.js');
 const {
   buildDeliveryUrl,
@@ -86,13 +87,18 @@ function createErrorHandler(logger) {
 /**
  * `/admin/api/*`。已經過 admin auth（token + 跨站檢查），這裡只管資料。
  */
-function createAdminApiRouter({ store, config, logger, fetchImpl, translation, crawler }) {
+function createAdminApiRouter({ store, config, logger, fetchImpl, translation, crawler, siteRules }) {
   const router = express.Router();
   router.use(express.json({ limit: '2mb' }));
 
   // v4：翻譯與爬蟲的端點（自己一個檔案，共用這裡的認證 / JSON parse / 錯誤處理）
   if (translation && crawler) {
     router.use(createTranslateApiRouter({ store, translation, crawler, logger }));
+  }
+
+  // v5：站台改造規則與資源覆寫（SPEC-rules §4）
+  if (siteRules) {
+    router.use(createRulesApiRouter({ store, siteRules, config, logger, fetchImpl, translation }));
   }
 
   const ssrfOptions = { allowPrivate: config.allowPrivate };

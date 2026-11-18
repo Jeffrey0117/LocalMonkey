@@ -6,6 +6,7 @@ const { renderErrorPage, escapeHtml } = require('../views/pages.js');
 const { readRequestBody, PayloadTooLargeError } = require('./body.js');
 const { forwardToUpstream, UpstreamError } = require('./forward.js');
 const { sendProxiedResponse } = require('./respond.js');
+const { serveResourceOverride } = require('./resource-override.js');
 
 const PROXY_PREFIX_PATTERN = /^\/p\/[^/?#]+/;
 
@@ -91,6 +92,9 @@ function upstreamFailedPage(site, error) {
  */
 function createProxyHandlers({ store, config, logger, fetchImpl, translation, siteRules }) {
   async function proxy(req, res, { site, pathWithQuery }) {
+    // 資源覆寫擺在最前面：命中就完全不碰上游（SPEC-rules §3.6）
+    if (serveResourceOverride(req, res, { store, site, pathWithQuery, logger })) return;
+
     try {
       await assertOriginAllowed(site.target_origin, { allowPrivate: config.allowPrivate });
     } catch (error) {

@@ -10,7 +10,7 @@
  * 只有新增 / 改過的文案要翻。
  */
 
-const { assertOriginAllowed } = require('../lib/ssrf.js');
+const { fetchUpstreamPage } = require('../services/fetch-page.js');
 const { collectCrawlTargets } = require('./crawl-links.js');
 const { collectSegments, uniqueTexts } = require('./pipeline.js');
 const { isUtf8Document } = require('./charset.js');
@@ -26,8 +26,6 @@ const LIMITS = Object.freeze({ maxPages: 500, maxDepth: 10 });
 
 /** 規格 §1 的實測值，UI 用它推估剩餘時間（這台實測熱的時候更快，約 118ms） */
 const MS_PER_SEGMENT = 221;
-
-const HTML_CONTENT_TYPE = /text\/html|application\/xhtml\+xml/i;
 
 class CrawlError extends Error {
   constructor(message) {
@@ -93,22 +91,12 @@ function createCrawler({ store, config, logger, translation, fetchImpl = fetch, 
     return store.crawlJobs.get(jobId)?.status !== 'running';
   }
 
-  async function fetchPage(site, path) {
-    await assertOriginAllowed(site.target_origin, { allowPrivate: config.allowPrivate });
-
-    const response = await fetchImpl(`${site.target_origin}${path}`, {
-      redirect: 'follow',
-      headers: { accept: 'text/html,application/xhtml+xml' },
-      signal: AbortSignal.timeout(config.upstreamTimeoutMs ?? 20_000),
+  function fetchPage(site, path) {
+    return fetchUpstreamPage(site, path, {
+      fetchImpl,
+      allowPrivate: config.allowPrivate,
+      timeoutMs: config.upstreamTimeoutMs,
     });
-
-    const contentType = response.headers.get('content-type');
-    if (!response.ok || !HTML_CONTENT_TYPE.test(contentType ?? '')) {
-      return { html: null, contentType };
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return { html: buffer.toString('utf8'), contentType };
   }
 
   /** 一頁：切段 → 排進佇列 → 把佇列跑完（爬蟲的目的就是把它翻出來） */

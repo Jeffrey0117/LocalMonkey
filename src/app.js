@@ -86,7 +86,16 @@ function createApp({
   app.use('/__lm', createInternalRouter({ store, favicons }));
   app.use(
     '/admin',
-    createAdminRouter({ store, config, adminToken, logger, fetchImpl, translation, crawler }),
+    createAdminRouter({
+      store,
+      config,
+      adminToken,
+      logger,
+      fetchImpl,
+      translation,
+      crawler,
+      siteRules,
+    }),
   );
 
   // 投遞給 Tampermonkey。免認證（憑證是路徑裡的 token），要排在代理的 catch-all 之前。
