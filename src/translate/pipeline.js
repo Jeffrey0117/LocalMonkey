@@ -21,10 +21,16 @@ const identity = (value) => value;
  * 所以同一句話在不同頁面換行位置不同時仍然命中同一筆。
  *
  * @param {string} html
- * @param {{ glossary?: string[], decode?: (text: string) => string }} [options]
+ * @param {{
+ *   glossary?: string[],
+ *   decode?: (text: string) => string,
+ *   ancestors?: boolean,
+ * }} [options] `ancestors: true` 時每一段多帶一條祖先鏈 —— `no-translate` 規則
+ *   的 scope 要靠它比對（`rules/no-translate.js`）。**預設不帶**：多算每個元素的
+ *   id 與 class 不是免費的，而絕大多數站沒有任何 scope 過的規則。
  */
-function collectSegments(html, { glossary = [], decode = identity } = {}) {
-  return segmentHtml(html).reduce((items, segment) => {
+function collectSegments(html, { glossary = [], decode = identity, ancestors = false } = {}) {
+  return segmentHtml(html, { ancestors }).reduce((items, segment) => {
     const { lead, core, trail } = splitEdges(segment.raw);
     if (core.length === 0) return items;
 
@@ -40,6 +46,7 @@ function collectSegments(html, { glossary = [], decode = identity } = {}) {
         kind: segment.kind,
         element: segment.element,
         attribute: segment.attribute ?? null,
+        ...(ancestors ? { ancestors: segment.ancestors } : {}),
         lead,
         trail,
         text,

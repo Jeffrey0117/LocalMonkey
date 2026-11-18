@@ -5,10 +5,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { startApp } = require('../support/app.js');
+const { startApp, adminJson } = require('../support/app.js');
 const { startUpstream } = require('../support/upstream.js');
 const { PRESETS, applyPreset } = require('../../src/rules/presets/index.js');
 const { translationHash } = require('../../src/translate/cache.js');
+const { collectSegments } = require('../../src/translate/pipeline.js');
+const { collectTranslatable } = require('../../src/rules/no-translate.js');
+const { DEFAULT_GLOSSARY } = require('../../src/translate/glossary.js');
 
 /**
  * SPEC-rules §3 / §6：**templatemo 的整組規則跑一次，逐條對照那張表**。
@@ -592,6 +595,110 @@ test('§10.3 使用者自己加的兩條 hide 也在 preset 裡（重跑 seed �
   const patterns = app.store.siteRules.listBySite('templatemo-com').map((rule) => rule.pattern);
   assert.ok(patterns.includes('.sharethis-inline-share-buttons'));
   assert.ok(patterns.includes('.tm-dl-grey-premium'));
+});
+
+/* ---------------------- §12 那段樣板文不要進翻譯佇列 ---------------------- */
+
+/** 切段 + 正規化之後的那一段（長 222 字，全頁第四長） */
+const BOILERPLATE =
+  'is 100% free to download for anyone. You are allowed to download, edit and use this ' +
+  'Lantern River HTML CSS layout for your commercial or non-commercial sites. ' +
+  'Please share Lantern River Template to your friends. Thank you.';
+
+/**
+ * ⛔ **藏掉不等於不翻。** 上面那條 `hide`（§10.3）只管視覺，而翻譯層跑在規則層
+ * **之前** —— 所以在 §12 之前，這 222 個字照樣被切段、照樣進佇列、照樣燒 ollama
+ * 的時間。templatemo 有 600+ 個模板頁，每頁一句名字內嵌（＝每頁都是一筆新的
+ * 快取 key），等於 600+ 段**沒有人會看到的**翻譯。
+ *
+ * 這條是端到端的證據：假 client 會把進過佇列的段原樣寫進 `translations`，
+ * 所以「`translations` 裡沒有這一段」＝它從來沒進去過。
+ */
+test('⛔ §12 詳情頁那段樣板文不會進翻譯佇列（而同一個容器裡的 Tags: 照樣會）', async (t) => {
+  const { app, get } = await scenario(t, { translate: true });
+
+  await get('/tm-634-lantern-river');
+  await app.translation.queue.idle();
+
+  assert.equal(
+    app.store.translations.get(translationHash(BOILERPLATE, LANG, MODEL)),
+    null,
+    '這一段應該連佇列都沒進過',
+  );
+
+  // ⛔ 同一個 `#tm-dl-box p` 裡的 `Tags:` 必須還在管線裡 —— 不然這條規則就是
+  // 「把整個容器關掉」，而 §10.4 才剛修好讓那些標籤進得了佇列
+  assert.ok(
+    app.store.translations.get(translationHash('Tags:', LANG, MODEL)),
+    '規則要只擋那一段，不是擋掉整個容器',
+  );
+});
+
+/**
+ * 省到多少：**實測 82 段 → 81 段、3452 字 → 3230 字**（tm-634，2026-11-18）。
+ *
+ * 這裡釘的是「差一段，而且差的就是那一段」而不是 82 這個絕對數字 ——
+ * 絕對數字會跟著切段規則一起漂（§10.4 就讓它多了三段），那種紅是噪音。
+ */
+test('§12 加了規則之後進佇列的段數少一段，而且少的就是樣板文那一段', async (t) => {
+  const { app } = await scenario(t);
+  const html = fixture('tm-634-lantern-river.html');
+
+  const before = collectSegments(html, { glossary: [...DEFAULT_GLOSSARY] });
+  const after = collectTranslatable(html, {
+    store: app.store,
+    siteId: 'templatemo-com',
+    glossary: [...DEFAULT_GLOSSARY],
+  });
+
+  assert.equal(after.skipped, 1);
+  assert.equal(after.items.length, before.length - 1);
+
+  assert.ok(before.some((item) => item.text === BOILERPLATE), '加規則前它會進佇列');
+  assert.equal(after.items.some((item) => item.text === BOILERPLATE), false);
+
+  // 222 個字（全頁 3452 字的 6.4%），而且是最長的那個「沒人看得到」的段
+  assert.equal(
+    before.reduce((sum, item) => sum + item.text.length, 0) -
+      after.items.reduce((sum, item) => sum + item.text.length, 0),
+    222,
+  );
+});
+
+/** 代理要把這件事講出來 —— 不然「有沒有真的省到」只能猜（SPEC-rules §12） */
+test('§12 省下幾段會回在 x-lm-translate header 上', async (t) => {
+  const { get } = await scenario(t, { translate: true });
+  const { response } = await get('/tm-634-lantern-river');
+
+  assert.match(response.headers.get('x-lm-translate'), /^\d+\/\d+ no-translate=1$/);
+});
+
+/**
+ * ⛔ 爬蟲（「預先翻譯整站」）走的是**另一條路徑**。少接它的後果是：頁面上
+ * 省掉了，但使用者按一次「預先翻譯整站」又把那 600 段全部塞回佇列。
+ */
+test('⛔ §12 爬蟲也要認這條規則（不然預先翻譯整站會把它塞回去）', async (t) => {
+  const { app } = await scenario(t, { translate: true });
+
+  const started = await adminJson(app.base, app.adminToken, '/admin/api/sites/templatemo-com/crawl', {
+    method: 'POST',
+    body: JSON.stringify({ startPath: '/tm-634-lantern-river', maxPages: 1, maxDepth: 0 }),
+  });
+  assert.equal(started.status, 202);
+
+  // 進度在 DB 裡，狀態離開 running 就是結束（等待迴圈一律要有 deadline，地雷 38）
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (app.store.crawlJobs.get(started.body.job.id)?.status !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.notEqual(app.store.crawlJobs.get(started.body.job.id).status, 'running', '爬蟲沒跑完');
+
+  assert.equal(app.store.translations.get(translationHash(BOILERPLATE, LANG, MODEL)), null);
+  assert.ok(
+    app.store.translations.get(translationHash('Tags:', LANG, MODEL)),
+    '同一頁的其他段還是要被爬蟲收進去',
+  );
 });
 
 /* ------------------ §10.4 Added / Views / Downloads 要翻譯 ------------------ */

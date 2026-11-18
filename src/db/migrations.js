@@ -327,6 +327,45 @@ ALTER TABLE sites ADD COLUMN dev_mode INTEGER NOT NULL DEFAULT 0
   CHECK (dev_mode IN (0, 1));
 `;
 
+/**
+ * v7：`no-translate` 規則型別（SPEC-rules §12）。
+ *
+ * 又一次重建 `site_rules` —— 同 v6 的理由（`kind` 的 CHECK 在建表語句裡）、
+ * 同樣的順序（rename → 建新表 → 複製 → DROP → 重建 index）。
+ * **這一版只動 CHECK，欄位一個都沒變**，所以複製是整列照搬；真正的風險還是
+ * 「既有規則在重建的過程中掉了」—— 那是靜默的，使用者的站會突然變回沒改造過的樣子。
+ *
+ * `no-translate` 的 pattern 是**文字比對**不是選擇器（理由在
+ * `rules/no-translate.js`：伺服器端沒有 DOM，而那段樣板文跟要翻的段同一個容器）。
+ */
+const SCHEMA_V7 = `
+ALTER TABLE site_rules RENAME TO site_rules_v6;
+
+CREATE TABLE site_rules (
+  id          TEXT PRIMARY KEY,
+  site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('hide', 'css', 'text-replace', 'text-rewrite', 'no-translate')),
+  pattern     TEXT NOT NULL,
+  replacement TEXT,
+  scope       TEXT,
+  note        TEXT,
+  enabled     INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+INSERT INTO site_rules
+  (id, site_id, kind, pattern, replacement, scope, note, enabled, order_index, created_at, updated_at)
+SELECT
+  id, site_id, kind, pattern, replacement, scope, note, enabled, order_index, created_at, updated_at
+FROM site_rules_v6;
+
+DROP TABLE site_rules_v6;
+
+CREATE INDEX idx_site_rules_site ON site_rules (site_id, order_index, id);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -351,6 +390,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 6,
     up: (db) => db.exec(SCHEMA_V6),
+  }),
+  Object.freeze({
+    version: 7,
+    up: (db) => db.exec(SCHEMA_V7),
   }),
 ]);
 

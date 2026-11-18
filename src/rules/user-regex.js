@@ -21,6 +21,17 @@ const MAX_PATTERN_LENGTH = 500;
 const SLASH_FORM = /^\/(.+)\/([gimsuy]*)$/s;
 
 /**
+ * 這個 pattern 寫成 `/正則/旗標` 的形狀嗎？
+ *
+ * `no-translate` 要靠它分辨「字面字串」與「正則」（SPEC-rules §12）。
+ * 單獨導出而不是讓呼叫端自己認：那個語法只能有一個定義，兩邊各寫一次
+ * 一定會在某個邊界（空旗標、`/` 在中間）分岔。
+ */
+function isSlashForm(pattern) {
+  return typeof pattern === 'string' && SLASH_FORM.test(pattern);
+}
+
+/**
  * 把「不影響結構」的東西拿掉，再看裡面有沒有量詞：
  * 跳脫序列（`\+` 是字面的加號）與字元類（`[+*]` 裡的也是字面的）。
  */
@@ -107,4 +118,4 @@ function compileUserRegex(pattern, { defaultFlags = 'g' } = {}) {
   }
 }
 
-module.exports = { compileUserRegex, hasNestedQuantifier, MAX_PATTERN_LENGTH };
+module.exports = { compileUserRegex, hasNestedQuantifier, isSlashForm, MAX_PATTERN_LENGTH };

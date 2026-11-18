@@ -213,6 +213,56 @@ test('⛔「試一下」要看得到翻譯後的文字（編碼用錯會每條�
   assert.equal(result.body.rules.find((entry) => entry.id === rule.id).matched, 1);
 });
 
+/**
+ * SPEC-rules §12：`no-translate` 的「命中」是**擋下來幾段**（＝省下的模型工作量），
+ * 跟文字規則的「改寫了幾段」不是同一件事。寫規則最怕「寫了沒反應」，所以這個
+ * 數字一定要有 —— 而且 `scope` 要真的透過 API 生效，不然使用者寫了範圍卻靜默全站。
+ */
+test('§12 no-translate 走得通 API，而且「試一下」數得出擋掉幾段', async (t) => {
+  const { api } = await scenario(t);
+
+  const scoped = await api('/admin/api/sites/demo/rules', {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'no-translate', pattern: '*', scope: '.tm-menu', note: '選單不翻' }),
+  });
+
+  assert.equal(scoped.status, 201);
+  assert.equal(scoped.body.rule.kind, 'no-translate');
+  assert.equal(scoped.body.rule.error, null);
+
+  const literal = await api('/admin/api/sites/demo/rules', {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'no-translate', pattern: 'templatemo logo' }),
+  });
+
+  const result = await api('/admin/api/sites/demo/rules/dry-run', {
+    method: 'POST',
+    body: JSON.stringify({ path: '/' }),
+  });
+
+  const byId = new Map(result.body.rules.map((rule) => [rule.id, rule]));
+  // `.tm-menu` 裡只有 `Links` 一段；`<title>templatemo</title>` 在範圍外，不准被算進去
+  assert.equal(byId.get(scoped.body.rule.id).matched, 1);
+  assert.equal(byId.get(literal.body.rule.id).matched, 1, 'alt 這種屬性段也算');
+});
+
+/** 編不過的規則照樣存得起來、在 UI 標紅（§4），而且不會害代理 500 */
+test('§12 編不過的 no-translate 存得起來並帶著 error', async (t) => {
+  const { app, api } = await scenario(t);
+
+  const created = await api('/admin/api/sites/demo/rules', {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'no-translate', pattern: '*' }),
+  });
+
+  assert.equal(created.status, 201);
+  assert.match(created.body.rule.error, /限定範圍/);
+
+  // 一條規則寫壞不該讓整個網站打不開（§4）
+  const page = await fetch(`${app.base}/p/demo/`);
+  assert.equal(page.status, 200);
+});
+
 test('「試一下」打到不是 HTML 的路徑 → 400 而不是靜默回 0', async (t) => {
   const { api } = await scenario(t, {
     upstream: (req, res) => {

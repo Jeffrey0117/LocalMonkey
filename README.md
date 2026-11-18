@@ -366,9 +366,15 @@ tests/
 | GET | `/admin/api/translate/simplified` | 快取裡哪幾段混到簡體字 |
 | POST | `/admin/api/translate/simplified/retranslate` | 一鍵重翻（預設跳過人工覆寫） |
 
-三種規則：`hide`（CSS 選擇器 → `display:none`）、`text-replace`（字面取代，
-大小寫風格跟著原文）、`text-rewrite`（正則 + `$1`…`$9`）。文字規則套在
-**翻譯之後**，而且只動文字段 —— `href` / `src` / `class` / `id` 永遠不會被碰到。
+五種規則：`hide`（CSS 選擇器 → `display:none`）、`css`（注入任意 CSS）、
+`text-replace`（字面取代，大小寫風格跟著原文）、`text-rewrite`（正則 + `$1`…`$9`）、
+`no-translate`（這些段不要餵給模型）。文字規則套在**翻譯之後**，而且只動文字段
+—— `href` / `src` / `class` / `id` 永遠不會被碰到。
+
+⛔ **`hide` 不會省下翻譯**：翻譯層跑在規則層之前，所以藏起來的文字照樣會進翻譯
+佇列。要省模型時間用 `no-translate`（它的 pattern 是**文字比對**：字面子字串、
+`/正則/`，或 `*` 配一個限定範圍）。省了幾段看回應的 `x-lm-translate` header
+與控制台的「試一下」。
 
 一組規則也可以用腳本一次配好（冪等，可以重跑）：
 

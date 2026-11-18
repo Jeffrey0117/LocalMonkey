@@ -21,7 +21,8 @@
 
 const { createOllamaClient } = require('./ollama.js');
 const { createTranslationQueue } = require('./queue.js');
-const { collectSegments, renderTranslated, uniqueTexts } = require('./pipeline.js');
+const { renderTranslated, uniqueTexts } = require('./pipeline.js');
+const { collectTranslatable } = require('../rules/no-translate.js');
 const { resolveTexts } = require('./cache.js');
 const { isUtf8Document } = require('./charset.js');
 const { rewriteHtmlLang } = require('./html-lang.js');
@@ -111,7 +112,14 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
     }
 
     try {
-      const items = collectSegments(html, { glossary: active.glossary, decode });
+      // ⛔ 切段的入口是 rules 那邊的 `collectTranslatable`，不是 `collectSegments`：
+      // `no-translate` 規則擋下來的段連**查快取**都不要做（SPEC-rules §12）。
+      const { items, skipped } = collectTranslatable(html, {
+        store,
+        siteId: site.id,
+        glossary: active.glossary,
+        decode,
+      });
       if (items.length === 0) return html;
 
       const texts = uniqueTexts(items);
@@ -139,6 +147,9 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
         hits: rendered.applied,
         misses: misses.length,
         unique: texts.length,
+        // 「本來要進佇列、被 no-translate 擋下來」的段數。這是那個功能唯一
+        // 看得到的產出 —— 不報出來的話「有沒有真的省到」只能猜
+        noTranslate: skipped,
       });
 
       // 真的翻了東西才改 `<html lang>`：一份還是英文的頁面不該宣告自己是中文

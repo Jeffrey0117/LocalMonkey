@@ -28,7 +28,8 @@ const rule = (overrides) => ({
 });
 
 test('css 是合法的 kind', () => {
-  assert.deepEqual(RULE_KINDS, ['hide', 'css', 'text-replace', 'text-rewrite']);
+  // `no-translate` 是 v7 加的（SPEC-rules §12），斷言在 rules-no-translate.test.js
+  assert.deepEqual(RULE_KINDS, ['hide', 'css', 'text-replace', 'text-rewrite', 'no-translate']);
 });
 
 test('編得起來的 css 規則帶著 css 欄位，沒有 error', () => {

@@ -12,8 +12,9 @@
 
 const { fetchUpstreamPage } = require('../services/fetch-page.js');
 const { collectCrawlTargets } = require('./crawl-links.js');
-const { collectSegments, uniqueTexts } = require('./pipeline.js');
+const { uniqueTexts } = require('./pipeline.js');
 const { isUtf8Document } = require('./charset.js');
+const { collectTranslatable } = require('../rules/no-translate.js');
 
 const DEFAULTS = Object.freeze({
   startPath: '/',
@@ -104,7 +105,13 @@ function createCrawler({ store, config, logger, translation, fetchImpl = fetch, 
     if (!isUtf8Document(html, contentType)) return 0;
 
     const active = translation.settingsFor(site);
-    const items = collectSegments(html, { glossary: active.glossary });
+    // ⛔ 跟請求路徑走同一支（`rules/no-translate.js`）。少接這一邊的後果是
+    // 「頁面上省掉了，但按一次『預先翻譯整站』又把那 600 段全部塞回佇列」。
+    const { items } = collectTranslatable(html, {
+      store,
+      siteId: site.id,
+      glossary: active.glossary,
+    });
     if (items.length === 0) return 0;
 
     const added = store.translateQueue.enqueue({

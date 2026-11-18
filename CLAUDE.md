@@ -9,6 +9,7 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 - [`docs/SPEC-translate.md`](docs/SPEC-translate.md) —— **v4：伺服器端翻譯層**（切段、ollama、快取、爬蟲）
 - [`docs/SPEC-rules.md`](docs/SPEC-rules.md) —— **v5：站台改造規則**（隱藏、改寫文字、資源覆寫）
   ＋ **v6（同一份的 §8~§11）**：內容雜湊 cache busting、開發模式、`css` 規則型別
+  ＋ **v7（§12）**：`no-translate` 規則型別（哪些段不要餵給模型）
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -42,7 +43,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1311 個測試
+npm test             # node:test，1345 個測試
 npm run test:coverage
 ```
 
@@ -107,6 +108,8 @@ HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是�
 1. 網址改寫   rewriteDocumentUrls()
 2. 翻譯回填   translate/service.js  ← 要在 1 之後：切段器算的是字元座標，
                                        之後的任何字串改動都會讓座標失效
+                                       ⚠ 這一步會先問規則層「哪些段不要翻」
+                                         （v7 的 `no-translate`，見下）
 3. 改造規則   rules/service.js      ← 文字規則套在**翻譯後**的文字上（v5），
                                        hide / css 的 CSS 插在 </head> 之前
 4. cache bust lib/cache-bust.js     ← 要在 1~3 **之後**：它改的是屬性值，
@@ -160,8 +163,11 @@ GET /s/<token>/<slug>.user.js      ← Tampermonkey（匿名，它帶不了 admi
 ```
 proxy/respond.js → translate/service.js translateHtml()   ← 同步！
   → charset.js       只有明確宣告 UTF-8 的文件才翻（理由見下面的設計決策）
-  → pipeline.js      collectSegments()：segment → splitEdges → decodeEntities
+  → rules/no-translate.js collectTranslatable()  ← v7：規則層唯一伸進翻譯層的手
+      → pipeline.js  collectSegments()：segment → splitEdges → decodeEntities
                      → normalizeSpace → isTranslatable（rules.js）
+      → 再篩掉 `no-translate` 規則命中的段（**篩在 isTranslatable 之後**，
+        所以「省下 N 段」是真的工作量，不是「掃過幾段」）
   → cache.js         批次查 translations（一次 SQL，manual 壓過 machine）
       命中 → 用
       沒命中 → **保留原文** + enqueue + queue.kick()（射後不理）
@@ -312,7 +318,8 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
 ## 資料模型（v5 新增）
 
 ```
-site_rules          id / site_id / kind('hide'|'css'|'text-replace'|'text-rewrite')
+site_rules          id / site_id / kind('hide'|'css'|'text-replace'|'text-rewrite'
+                                        |'no-translate')
                     pattern / replacement / scope / note / enabled / order_index
 resource_overrides  id / site_id / path / sha256 → assets / content_type / enabled
                     UNIQUE(site_id, path)
@@ -332,8 +339,14 @@ sites               + dev_mode（v6）
   `</style>`（規格 §4 要壞規則存得起來並標紅）—— 真正的防線在 `rules/css-text.js`。
 - **`sites.dev_mode` 是「反覆調規則時打開、調完關掉」的開關，不是常駐狀態**。
   打開時所有非 HTML 回應改成 `no-cache`（保留 ETag）。
-- **v6 的 migration 重建了整張 `site_rules`**（`kind` 的 CHECK 寫在建表語句裡，
-  SQLite 不能 ALTER）。順序照地雷 11：rename → 建新表 → 複製 → 最後才 DROP。
+- **`kind='no-translate'` 的 `pattern` 存的是「文字比對」，不是選擇器**（v7）：
+  字面子字串、`/正則/`，或 `*`（＝整個 `scope` 範圍內全部不翻，而且**沒有 scope
+  的 `*` 編不過**）。為什麼不是選擇器：伺服器端沒有 DOM，而 templatemo 那段
+  樣板文跟 `Tags:` / `Added:` 共用容器（SPEC-rules §12.1 有完整理由）。
+- **v6 與 v7 的 migration 各重建了一次整張 `site_rules`**（`kind` 的 CHECK 寫在
+  建表語句裡，SQLite 不能 ALTER）。順序照地雷 11：rename → 建新表 → 複製 →
+  最後才 DROP。**加新 kind 就是這個代價**，而風險是「既有規則在搬家時掉了」
+  （靜默：使用者的站突然變回沒改造過的樣子），所以 migration 測試要逐欄位對帳。
 
 ---
 
@@ -643,6 +656,28 @@ sites               + dev_mode（v6）
     **從來沒被收進去**。查的順序是：`isTranslatable()` → `translate_queue`
     → `translations`，不是倒過來。
 
+### v7（`no-translate`）踩到的
+
+56. **⛔ `hide` 掉的東西照樣會被翻 —— 「藏起來」與「不要翻」是兩層。**
+    翻譯層跑在規則層**之前**（那個順序是為了「改規則立刻生效、不用重翻」），
+    所以 CSS 藏掉的段照樣被切段、照樣進佇列、照樣燒 ollama 的時間。
+    templatemo 的詳情頁樣板文藏了一整輪，600+ 頁的翻譯一段都沒省到。
+    **判準**：凡是「省下伺服器端的工作」的需求，都要問「這件事發生在管線的
+    第幾步」—— 在後面做的事情不會讓前面的事情不發生。
+57. **⛔ 「省下 N 段」很容易做成一個漂亮但假的數字。** 那段樣板文的 `<p>` 在
+    切段器眼裡是**兩段**，第二條規則可以讓「省下 1 段」變成「省下 2 段」——
+    但前半段（`<模板名> Template`）**同一個字串也是頁面上看得到的 `<h1>`**，
+    而佇列是按**去重後的原文**翻的，所以模型的工作量一模一樣。
+    量的時候要同時看三個數字：**段數、去重後的原文數、字元數**。
+    只看段數會把「搬動工作」當成「省下工作」。
+    （所以那條規則沒有進 preset，理由寫在 `presets/templatemo-com.js`。）
+58. **加一個 `kind` 的成本是「重建整張 `site_rules`」**（CHECK 不能 ALTER），
+    而且三個地方的版本號釘子要跟著動：`migration-v5/v6.test.js` 的版本斷言
+    與 `rules-css-kind.test.js` 的 `RULE_KINDS` deepEqual。
+    「當下最新版本」那個釘子只留在**最新**那一版的測試檔裡（現在是
+    `migration-v7.test.js`），舊的改成只釘自己那一版 —— 不然每加一版就有
+    N 條測試一起紅，而那些紅沒有任何資訊。
+
 ---
 
 ## 改動時的注意事項
@@ -666,7 +701,7 @@ sites               + dev_mode（v6）
   比對字串測不到「localStorage 被停用時會怎樣」這種事。
 - **測試是 TDD 寫出來的，先紅再綠。** 修 bug 時：先寫一個會紅的測試，
   確認它真的紅（把修改 revert 掉跑一次），再修。
-- **覆蓋率門檻 80%，目前 97%。** 新程式碼請一起把測試補上。
+- **覆蓋率門檻 80%，目前 98%。** 新程式碼請一起把測試補上。
 - **不要留 `console.log`。** 要 log 就用 `src/logger.js`（`logger.info/warn/error`）。
   `src/public/*.js` 是瀏覽器端的後台 UI，那裡也不要留 debug log。
 

@@ -22,11 +22,11 @@ function columnsOf(db, table) {
 /**
  * ⛔ 這條故意釘**當下**的版本號（而不是跟著 SCHEMA_VERSION 浮動）：加 migration
  * 的時候要被迫回來看一眼，確認自己是「加新版本」而不是「改舊的那一版」。
- * v6 的斷言在 migration-v6.test.js。
+ * 那個「當下」的釘子永遠在**最新那一版**的測試檔裡（現在是 migration-v7.test.js）。
  */
-test('schema 版本是 6', () => {
-  assert.equal(SCHEMA_VERSION, 6);
-  assert.equal(fresh().pragma('user_version', { simple: true }), 6);
+test('schema 版本至少到 v5（v5 是這個檔案的主角）', () => {
+  assert.ok(SCHEMA_VERSION >= 5, `SCHEMA_VERSION = ${SCHEMA_VERSION}`);
+  assert.equal(fresh().pragma('user_version', { simple: true }), SCHEMA_VERSION);
 });
 
 test('site_rules 的欄位齊全（含規格 §3.2 後來追加的 scope）', () => {

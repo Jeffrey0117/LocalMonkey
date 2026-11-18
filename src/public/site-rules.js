@@ -22,10 +22,17 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     ['css', '注入 CSS'],
     ['text-replace', '改寫文字（字面）'],
     ['text-rewrite', '改寫文字（正則）'],
+    ['no-translate', '不要翻譯'],
   ];
 
   /** 這兩種變成注入的 CSS：用不到 replacement 與 scope */
   const STYLE_KINDS = new Set(['hide', 'css']);
+
+  /**
+   * `no-translate` 沒有「換成什麼」—— 它不改頁面，只是把那些段從翻譯佇列裡拿掉。
+   * 但它**吃 scope**（跟文字規則同一套），所以不能跟 STYLE_KINDS 混成一個旗標。
+   */
+  const NO_REPLACEMENT_KINDS = new Set(['hide', 'css', 'no-translate']);
 
   /**
    * 換了圖之後要講的那句話。
@@ -47,6 +54,10 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     },
     'text-replace': { pattern: '要找的字，例 templatemo', replacement: '換成，例 templatee' },
     'text-rewrite': { pattern: '正則，例 ^(\\d{2,4})\\s+(.+)$', replacement: '例 $2[$1]' },
+    'no-translate': {
+      pattern: '含這些字的段就不翻，例 is 100% free；/正則/ 也可以；* ＝ 範圍內全部不翻',
+      replacement: '（不要翻譯不需要替換字）',
+    },
   };
 
   const state = {
@@ -91,6 +102,14 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     const matched = found.matched === null ? found.cssMatched ?? null : found.matched;
     if (matched === null) return '<span class="badge" title="還沒數到">?</span>';
 
+    // `no-translate` 的「命中」是**擋下來幾段**（＝省下的模型工作量），
+    // 跟其他規則的「改到幾段」不是同一件事，文案要分得出來
+    if (rule.kind === 'no-translate') {
+      return matched > 0
+        ? `<span class="badge is-ok">省下 ${matched} 段</span>`
+        : '<span class="badge is-bad">0 段</span>';
+    }
+
     return matched > 0
       ? `<span class="badge is-ok">命中 ${matched}</span>`
       : '<span class="badge is-bad">0 命中</span>';
@@ -129,6 +148,7 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     const placeholder = PLACEHOLDERS[rule.kind] ?? PLACEHOLDERS.hide;
     // hide 與 css 都變成注入的 CSS → 用不到 replacement 與 scope
     const isStyle = STYLE_KINDS.has(rule.kind);
+    const noReplacement = NO_REPLACEMENT_KINDS.has(rule.kind);
 
     return `
       <div class="rule-row${rule.error ? ' has-error' : ''}" data-rule-id="${escapeHtml(rule.id)}">
@@ -140,7 +160,7 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
           value="${escapeHtml(rule.replacement ?? '')}"
           placeholder="${escapeHtml(placeholder.replacement)}"
           spellcheck="false"
-          ${isStyle ? 'disabled' : ''}
+          ${noReplacement ? 'disabled' : ''}
         />
         <input
           data-action="rule-scope"
@@ -295,7 +315,12 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       <div class="site-rules">
         <div class="site-rules-head">
           <strong>改造規則</strong>
-          <span class="muted">依序套用；文字規則作用在翻譯後的文字上，而且只動文字段（不碰 href / src / class）</span>
+          <span class="muted">
+            依序套用；文字規則作用在翻譯後的文字上，而且只動文字段（不碰 href / src / class）。
+            「不要翻譯」比的是**文字**（字面、<code>/正則/</code>、或 <code>*</code> ＝ 範圍內全部），
+            限定範圍只看得懂 <code>tag</code> / <code>.class</code> / <code>#id</code> 與空白、<code>&gt;</code>
+            組合子 —— <code>:has()</code>、<code>[attr]</code> 這些會被標紅，不會悄悄變成全站生效。
+          </span>
         </div>
 
         ${devModeRow(site)}

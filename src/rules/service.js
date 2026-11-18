@@ -10,6 +10,11 @@
  *           → 腳本注入 → 送出
  * ```
  *
+ * ⛔ **`no-translate` 不在這條管線上**（SPEC-rules §12）：它改的不是頁面，而是
+ * 「哪些段要餵給模型」，所以它生效的地方在**翻譯層**（`rules/no-translate.js`
+ * 的 `collectTranslatable()`，由 `translate/service.js` 與 `translate/crawl.js`
+ * 呼叫）。這支只負責把它的**條數**報進 `onStats` 給 UI 看。
+ *
  * ⛔ 跟 `translate/service.js` 一樣是**同步**的，而且只查 SQLite。規則層一旦
  * 能 await，就一定有人會在請求路徑上做網路 IO。
  *
@@ -20,8 +25,9 @@
  * 頁面都一樣。
  */
 
-const { compileRules, activeHideRules, activeCssRules } = require('./compile.js');
+const { compileRules, activeHideRules, activeCssRules, activeNoTranslateRules } = require('./compile.js');
 const { applyTextRules } = require('./apply.js');
+const { countNoTranslate } = require('./no-translate.js');
 const { buildRulesCss } = require('./hide-css.js');
 const { injectStyleTag } = require('./style-tag.js');
 const { isUtf8Document } = require('../translate/charset.js');
@@ -73,6 +79,9 @@ function createSiteRulesService({ store, logger }) {
         text: text.applied,
         hits: text.hits,
         charsetSkipped: !utf8,
+        // `no-translate` 不在這條管線上（它作用在翻譯層，SPEC-rules §12），
+        // 但「這個站有幾條」還是要報 —— 不然 UI 看不出它有沒有在生效
+        noTranslate: activeNoTranslateRules(compiled).length,
       });
 
       return injectStyleTag(text.html, css);
@@ -99,6 +108,9 @@ function createSiteRulesService({ store, logger }) {
   function dryRun(html, rows) {
     const compiled = compileRules(rows);
     const result = applyTextRules(html, compiled);
+    // `no-translate` 的「命中」是**擋下來幾段**，跟文字規則的「改寫了幾段」
+    // 是兩回事，所以另外數一輪（`no-translate.js` 有為什麼要在這裡數）
+    const skipped = countNoTranslate(html, compiled);
 
     return {
       rules: compiled.map((rule) => ({
@@ -110,7 +122,11 @@ function createSiteRulesService({ store, logger }) {
         error: rule.error,
         // hide 的命中數由瀏覽器算、css 根本沒有命中數
         // （這裡回 null 而不是 0，UI 才分得出「不知道」）
-        matched: STYLE_KINDS.has(rule.kind) ? null : result.hits[rule.id] ?? 0,
+        matched: STYLE_KINDS.has(rule.kind)
+          ? null
+          : rule.kind === 'no-translate'
+            ? skipped[rule.id] ?? 0
+            : result.hits[rule.id] ?? 0,
       })),
       applied: result.applied,
       skippedSegments: result.skipped,

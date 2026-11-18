@@ -61,10 +61,10 @@ function seedRules(db) {
   });
 }
 
-test('schema 版本是 6', () => {
-  const db = new Database(':memory:');
-  assert.equal(migrate(db), 6);
-  assert.equal(SCHEMA_VERSION, 6);
+/** 「當下的最新版本」那個釘子在 migration-v7.test.js；這裡只管 v6 自己 */
+test('v6 這一版把 user_version 推到 6', () => {
+  assert.equal(upTo(6).pragma('user_version', { simple: true }), 6);
+  assert.ok(SCHEMA_VERSION >= 6, `SCHEMA_VERSION = ${SCHEMA_VERSION}`);
 });
 
 test('sites 多一個 dev_mode，預設關', () => {
@@ -114,7 +114,8 @@ test('⛔ v5 的規則在重建表之後一列不少、每個欄位都對', () =
   const db = upTo(5);
   seedRules(db);
 
-  assert.equal(migrate(db), 6);
+  // `migrate` 會一路跑到最新版（v7 又重建了一次 site_rules，見 migration-v7.test.js）
+  assert.equal(migrate(db), SCHEMA_VERSION);
 
   const rows = db.prepare('SELECT * FROM site_rules ORDER BY order_index').all();
   assert.equal(rows.length, 2);

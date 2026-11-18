@@ -110,12 +110,18 @@ function copyHeaders(res, response, site, { html }) {
  */
 function setDebugHeaders(res, stats) {
   if (stats.translate) {
-    res.setHeader('x-lm-translate', `${stats.translate.hits}/${stats.translate.total}`);
+    // `no-translate` 擋掉幾段只有有規則的站才附上 —— `hits/total` 的形狀是既有的
+    // 契約（而且是人在看的），沒省到任何東西時不要在上面加噪音
+    const skipped = stats.translate.noTranslate > 0 ? ` no-translate=${stats.translate.noTranslate}` : '';
+    res.setHeader('x-lm-translate', `${stats.translate.hits}/${stats.translate.total}${skipped}`);
   }
   if (stats.rules) {
+    // 「這個站有幾條 no-translate 在生效」跟「這一頁省了幾段」是兩個問題：
+    // 規則有載到但這一頁一段都沒中時，前者才答得出「寫了沒反應」的原因
+    const noTranslate = stats.rules.noTranslate > 0 ? ` no-translate=${stats.rules.noTranslate}` : '';
     res.setHeader(
       'x-lm-rules',
-      `hide=${stats.rules.hide} css=${stats.rules.css ?? 0} text=${stats.rules.text}`,
+      `hide=${stats.rules.hide} css=${stats.rules.css ?? 0} text=${stats.rules.text}${noTranslate}`,
     );
   }
 }
