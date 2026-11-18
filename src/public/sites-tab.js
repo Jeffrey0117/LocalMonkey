@@ -11,6 +11,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
   const api = window.LocalMonkeyApi;
   const siteTranslate = window.LocalMonkeySiteTranslate;
   const siteRules = window.LocalMonkeySiteRules;
+  const siteReskin = window.LocalMonkeySiteReskin;
 
   const state = { sites: [] };
 
@@ -62,6 +63,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
         <td>${scriptsCell(site)}</td>
         <td>${siteTranslate.summary(site)}</td>
         <td>${siteRules.summary(site)}</td>
+        <td>${siteReskin.summary(site)}</td>
         <td>
           <label class="switch">
             <input type="checkbox" data-action="toggle" ${site.enabled ? 'checked' : ''} />
@@ -70,15 +72,17 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
         </td>
       </tr>
       ${translateRow(site)}
-      ${rulesRow(site)}`;
+      ${rulesRow(site)}
+      ${reskinRow(site)}`;
   }
 
   /**
    * 翻譯設定是「展開在下一列」而不是跳對話框：它有五個欄位 + 進度條，
    * 塞進那一格會把整張表撐歪，而對話框會讓使用者看不到自己在設哪一站。
    *
-   * `colspan` 要跟表頭的欄數一致（**7 欄** —— 加「改造規則」那一欄的時候
-   * 漏改這裡，展開的那一塊會縮成一格寬）。
+   * `colspan` 要跟表頭的欄數一致（現在是 **8 欄** —— 加「改造規則」那一欄的
+   * 時候漏改過一次，展開的那一塊會縮成一格寬；加「重繪」那一欄時三個
+   * `colspan` 都要一起改）。
    */
   function translateRow(site) {
     const panel = siteTranslate.panel(site);
@@ -86,7 +90,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
     return `
       <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
-        <td colspan="7">${panel}</td>
+        <td colspan="8">${panel}</td>
       </tr>`;
   }
 
@@ -97,7 +101,18 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
     return `
       <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
-        <td colspan="7">${panel}</td>
+        <td colspan="8">${panel}</td>
+      </tr>`;
+  }
+
+  /** 重繪設定（SPEC-reskin §6）也是展開在下一列，同一個理由 */
+  function reskinRow(site) {
+    const panel = siteReskin.panel(site);
+    if (panel === '') return '';
+
+    return `
+      <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
+        <td colspan="8">${panel}</td>
       </tr>`;
   }
 
@@ -142,6 +157,12 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
       siteOf: (element) => siteOf(element),
       onChanged: () => render(),
       // 改了站本身的欄位（dev_mode）要重新抓清單，不然 render() 會拿舊的 site 物件
+      onSiteChanged: () => refresh(),
+    });
+    siteReskin.init(rows, {
+      siteOf: (element) => siteOf(element),
+      onChanged: () => render(),
+      // reskin_enabled / reskin_theme 存在 site 上 → 改完要重抓清單
       onSiteChanged: () => refresh(),
     });
 

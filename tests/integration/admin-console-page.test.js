@@ -129,7 +129,7 @@ test('/admin 回控制台的骨架（分頁、丟腳本、編輯器容器）', a
   }
 });
 
-test('v4：網站分頁的表頭有「翻譯」欄，而且展開列的 colspan 跟欄數一致', () => {
+test('網站分頁的表頭與展開列的 colspan 一致（v4 翻譯 / v5 規則 / v8 重繪）', () => {
   const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
   const panel = /<section[^>]*id="tab-sites"[\s\S]*?<\/section>/.exec(html);
 
@@ -143,16 +143,17 @@ test('v4：網站分頁的表頭有「翻譯」欄，而且展開列的 colspan 
     '掛著的腳本',
     '翻譯',
     '改造規則',
+    '重繪',
     '啟用',
   ]);
 
   // ⛔ colspan 對不上的話展開列會把整張表撐歪（而且只有真瀏覽器看得出來）。
-  // 現在有兩個展開列（翻譯設定、改造規則），所以**每一個** colspan 都要對 ——
-  // 只檢查「有一個是對的」會漏掉新加的那一個。
+  // 現在有三個展開列（翻譯設定、改造規則、重繪設定），所以**每一個** colspan
+  // 都要對 —— 只檢查「有一個是對的」會漏掉新加的那一個。
   const sitesTab = fs.readFileSync(path.join(PUBLIC_DIR, 'sites-tab.js'), 'utf8');
   const colspans = [...sitesTab.matchAll(/colspan="(\d+)"/g)].map((match) => Number(match[1]));
 
-  assert.ok(colspans.length >= 2, '展開列應該有兩個（翻譯設定與改造規則）');
+  assert.ok(colspans.length >= 3, '展開列應該有三個（翻譯設定、改造規則、重繪設定）');
   assert.deepEqual(
     [...new Set(colspans)],
     [headers.length],

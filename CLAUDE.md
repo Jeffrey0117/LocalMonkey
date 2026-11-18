@@ -10,6 +10,8 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 - [`docs/SPEC-rules.md`](docs/SPEC-rules.md) —— **v5：站台改造規則**（隱藏、改寫文字、資源覆寫）
   ＋ **v6（同一份的 §8~§11）**：內容雜湊 cache busting、開發模式、`css` 規則型別
   ＋ **v7（§12）**：`no-translate` 規則型別（哪些段不要餵給模型）
+- [`docs/SPEC-reskin.md`](docs/SPEC-reskin.md) —— **v8：重繪**（第三種模式：
+  上游當**資料來源**，用我們自己的版型重畫）
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -43,7 +45,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1345 個測試
+npm test             # node:test，1356 個測試
 npm run test:coverage
 ```
 
@@ -105,6 +107,8 @@ HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是�
 `proxy/respond.js` 的 `transformHtml()` 把三層改寫串起來，**順序同樣是規格**：
 
 ```
+0. 重繪       reskin/service.js    ← v8：回 null ＝這一頁不重繪，照舊走第 1 步；
+                                     回字串 ＝整份文件換成我們畫的，第 1 步跳過
 1. 網址改寫   rewriteDocumentUrls()
 2. 翻譯回填   translate/service.js  ← 要在 1 之後：切段器算的是字元座標，
                                        之後的任何字串改動都會讓座標失效
@@ -251,6 +255,64 @@ src/rules/
   presets/        使用者實際要求的那幾組規則（**資料**，不是引擎）
 ```
 
+### 重繪一頁怎麼走（v8）
+
+```
+proxy/respond.js → reskin/service.js reskinHtml()   ← 同步，跟翻譯／規則同一套紀律
+  → 沒開 / charset 不是 UTF-8 / 設定編不過 / 沒有一筆 match 命中 → **回 null**
+                                                     （＝退回代理模式，/about 照舊能開）
+  → fromLatin1()     邊界解碼：抽取要讀懂文字、版型要寫中文
+  → config.js        宣告式設定 → 可執行（findEntry 挑第一個命中的）
+  → reskin_cache     key ＝ 路徑 + 上游 HTML 的 sha256 → 上游沒變就不重抽
+  → extract.js       dom.js 建樹 → query.js 跑選擇器 → **我們的資料模型**
+  → themes/<id>      資料 → HTML（版型層**完全不知道上游是誰**）
+  → toLatin1()       編回管線字串，交給翻譯 → 規則 → cache bust → 注入
+```
+
+**三層的界線就是整個 v8 的價值**（SPEC-reskin §0~§1）：使用者真正在做的是自己的
+模板商城，被代理的站只是「真實感的假資料」。所以**版型與商城機制是資產**
+（換資料來源就能上線），**抽取規則是可拋棄的那一層**。
+`tests/unit/reskin-theme-purity.test.js` 會掃整個 `themes/` 目錄，看到上游的字樣
+或選擇器就紅 —— 那條紀律靠人記不住。
+
+```
+src/reskin/
+  dom.js          HTML → 小樹（複用 translate/segment.js 的分詞器原語）
+  query.js        樹上跑選擇器（複用 rules/scope.js 的文法與比對）
+  config.js       抽取設定的驗證與編譯
+  extract.js      設定 + HTML → 資料模型（listing / product）
+  url.js          上游網址 → 代理路徑（版型層因此只拿到本站路徑）
+  pricing.js      價格方案（上游沒有價格，我們自己定；不接金流）
+  presets/        各站的抽取設定（**資料**，會被丟掉的那一層）
+  themes/         版型（資產）—— shopee/{index,parts,listing,product,css}.js
+  service.js      門面：代理與控制台叫的都是這支
+src/public/reskin-shop.js   購物車／會員／下載閘門（localStorage，純前端示範）
+```
+
+### ⛔ v8 的依賴例外：為什麼仍然沒有引入 HTML parser
+
+規格 §3.2 預期的結論是「既有機制撐不住就引入一個小型 parser」。**實作後的結論
+是不用**，理由是：缺的東西只有「一棵樹」，分詞器與選擇器比對這個專案都已經有了。
+
+- `translate/segment.js` 已經匯出 `findTagEnd`（引號感知的 `>`）、`attributesOf`
+  （屬性值 + 座標）、`VOID_ELEMENTS`、`SKIP_ELEMENTS` —— 被既有測試磨過。
+  `reskin/dom.js` 只多做一件事：把那串 token **疊成父子關係**。
+- `rules/scope.js` 已經有選擇器文法與祖先鏈比對。`reskin/query.js` 直接用它，
+  差別只有「比對釘在鏈的最後一節」（`matchesScope` 問的是「在不在裡面」，
+  抽取問的是「這個元素符不符合」）—— 所以 `scope.js` 多匯出一支 `matchesSuffix`，
+  **沒有第三套選擇器**，使用者學一套語法就夠。
+
+既有機制真正撐不住的兩件事（取屬性、取巢狀分組）都在**新的** `src/reskin/` 裡，
+代理 / 翻譯 / 規則三條既有管線一個 byte 都沒動。零依賴原則因此沒有破例。
+
+`scope.js` 的文法表達不了的兩種情形，用欄位層的兩個鍵解決而不是擴充文法
+（擴充文法會改掉文字規則 `scope` 的行為）：
+
+| 情形 | 鍵 | 為什麼選擇器做不到 |
+|---|---|---|
+| 標籤連結與別的連結同容器同選擇器 | `when: { attr, match }` | `[href^=…]` 是 `scope.js` 明確拒絕的 |
+| 觀看數／下載數是**裸的文字節點** | `extract: '<正則>'` | 沒有元素包著它，選擇器再強也抓不到 |
+
 ### 後台前端（v3 之後是兩層）
 
 ```
@@ -347,6 +409,31 @@ sites               + dev_mode（v6）
   建表語句裡，SQLite 不能 ALTER）。順序照地雷 11：rename → 建新表 → 複製 →
   最後才 DROP。**加新 kind 就是這個代價**，而風險是「既有規則在搬家時掉了」
   （靜默：使用者的站突然變回沒改造過的樣子），所以 migration 測試要逐欄位對帳。
+
+## 資料模型（v8 新增）
+
+```
+sites         + reskin_enabled / reskin_theme / reskin_config / reskin_pricing
+reskin_cache    key(PK) / site_id → sites(ON DELETE CASCADE) / path
+                html_sha256 / kind / data(JSON) / created_at
+```
+
+- **v8 的 migration 不重建任何表**（只有 `ADD COLUMN` 與 `CREATE TABLE`）——
+  v6 / v7 重建整張 `site_rules` 是因為它們加了新的 `kind` 而 `CHECK` 不能 ALTER
+  （地雷 58）。重繪不是一種規則，設定掛在 `sites` 上，所以那個風險一個都沒有。
+- **`reskin_config` 編不過也要存得起來**（同壞規則的紀律，SPEC-rules §4），
+  所以那兩個 JSON 欄位沒有 CHECK，DB 層也**原樣回字串不 parse**
+  —— 在 DB 層丟例外的話整個網站清單都會打不開。
+- **`reskin_theme` 的 NULL ＝「用預設版型」**，語意同 `translate_model`。
+  但**版型名會擋**不認得的值（下拉選單選的，收到怪值只會是程式打錯；
+  存下去的話畫面會悄悄退回預設，而使用者以為自己換成功了）。
+- **`reskin_cache` 的 key 含上游 HTML 的 sha256**（規格 §3.3）→ 上游一變 key
+  就自然錯開，**不需要任何失效邏輯**（同 `assets` 的內容定址）。
+  key 用**長度前綴**串，不是分隔符：`('a','b/c')` 與 `('a/b','c')` 用 `/` 串
+  會撞成同一個 key ＝某一頁拿到另一頁的資料。
+- 快取是**純衍生資料** → 可以放心 CASCADE、放心整站清掉。
+  這跟 `translate_queue` 刻意不設外鍵是**相反**的判斷：那裡存的是「還沒做完的
+  工作」，不是衍生資料。
 
 ---
 
@@ -678,6 +765,49 @@ sites               + dev_mode（v6）
     `migration-v7.test.js`），舊的改成只釘自己那一版 —— 不然每加一版就有
     N 條測試一起紅，而那些紅沒有任何資訊。
 
+### v8（重繪）踩到的
+
+59. **⛔ 「元素自己的文字」與「子元素的文字」分開存 → 文件順序就沒了。**
+    `dom.js` 第一版把直接文字累加在 `node.text`、子元素放 `children`，於是
+    `textOf()` 吐出「所有直接文字」再接「所有子元素的文字」。實測現場：
+    `<p><strong>Views:</strong> 11,249 <strong>Downloads:</strong> 1,354</p>`
+    變成 `11,249 1,354Views:Downloads:`，`Views:\s*([\d,]+)` 這條
+    **永遠抽不到**。症狀是「觀看數跟下載數一直是空的」，而選擇器怎麼看都對。
+    正解：文字節點也進 `children`（`tag: '#text'`），查詢時再跳過它們。
+60. **⛔ 「候選上限」不是「結果上限」。** `queryAll` 的 `limit` 砍的是**比對到的
+    元素**，而 `when` 是**之後**才篩的 —— 第一版把 limit 當結果上限設成 50，
+    於是「分類列」只抓到 4 個標籤：頁面前 50 個 `<a>` 裡剛好只有 4 個是標籤連結，
+    後面的根本沒被看過。凡是「先取 N 個再篩」的地方都要問一次：N 是取樣上限
+    還是答案上限？
+61. **⛔ 上游會把同一個 class 用在兩個完全不同的東西上。** templatemo 的
+    `.paging` 同時是頁碼列**與**標籤列，所以 `.paging a` 讓分頁變成
+    「1 2345678下一步 模板標籤 單頁 攝影…」。分得出來的只有 `href`，
+    而 `[href*=…]` 是選擇器文法明確拒絕的 —— 這就是 `when` 存在的理由。
+    **配完一定要把每一種頁面都開過一遍**（同地雷 45）。
+62. **⛔ 伺服器端算一個值、前端載入後又算一次 → 畫面會自己跳。**
+    商品頁的價格區塊印 `headlinePrice()`（最便宜的**付費**方案），而
+    `shop.js` 一載入就照「選中的方案」重畫 —— 第一版預設選第一檔（免費），
+    於是 `NT$199` 在使用者眼前變成「免費」。兩邊要用同一個事實：
+    預設選中的就是 headline 那一檔。
+63. **⛔ 面板是整塊重畫的 → 使用者「還沒存的東西」會被存檔版蓋掉。**
+    控制台的「試一下」會 `render()`，而 textarea 的內容是從**存好的**設定畫的。
+    使用者改設定 → 按試一下 → 改的東西在那一瞬間沒了。
+    路徑輸入框也一樣（打了 `/page/1`，下一次按就悄悄變成試首頁）。
+    兩個都要進 state（`state.draft` / `state.path`），存檔成功才清掉草稿。
+64. **⛔ `css.js` 的註解在 template literal 裡面，不准出現反引號。**
+    在註解裡寫 `` `order` `` 會把字串提前關掉，而錯誤訊息只說
+    `Unexpected identifier 'order'`（同地雷 19 的家族：**在註解裡寫出會終止
+    外層結構的字元**）。
+65. **「沒帶這個欄位」與「帶了一個看不懂的值」要分得開。**
+    `dry-run` 的 `config` 省略時代表「用站上存好的那份」—— 第一版用
+    `asConfigText(req.body?.config)` 一視同仁，於是最常見的用法直接回 400。
+    判斷要用 `'config' in body`，不是值本身。
+66. **既有規則會套到重繪後的 HTML 上 —— 那是對的，但會嚇到人。**
+    使用者那條全站的 `text-rewrite「免費」→ ""` 會把版型自己的「免費版」
+    badge 吃成「版」；測試用的 userscript 也照樣注入、照樣改標題。
+    規格 §5 要的就是這個行為，所以**不要在版型裡繞過它** ——
+    真正的修法是使用者把那條規則收個 scope。
+
 ---
 
 ## 改動時的注意事項
@@ -701,7 +831,9 @@ sites               + dev_mode（v6）
   比對字串測不到「localStorage 被停用時會怎樣」這種事。
 - **測試是 TDD 寫出來的，先紅再綠。** 修 bug 時：先寫一個會紅的測試，
   確認它真的紅（把修改 revert 掉跑一次），再修。
-- **覆蓋率門檻 80%，目前 98%。** 新程式碼請一起把測試補上。
+- **覆蓋率門檻 80%，目前 93%。** 新程式碼請一起把測試補上。
+  （v8 的版型層與控制台 UI 主要靠整合測試與真瀏覽器驗收，不是單元測試 ——
+  版面的對錯 `vm.Script` 看不出來，見地雷 27。）
 - **不要留 `console.log`。** 要 log 就用 `src/logger.js`（`logger.info/warn/error`）。
   `src/public/*.js` 是瀏覽器端的後台 UI，那裡也不要留 debug log。
 

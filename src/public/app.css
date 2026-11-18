@@ -1302,3 +1302,114 @@ tbody tr:last-child td {
 .notice.is-warn {
   color: #ffd79a;
 }
+
+/* --------------------- 站台的重繪設定（展開列，SPEC-reskin §6） --------------------- */
+
+.reskin-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.reskin-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/*
+ * 兩欄：左邊是抽取設定（要很寬，JSON 很長），右邊是價格表。
+ * 窄一點就疊成一欄 —— 控制台常常開在半個螢幕寬。
+ */
+.reskin-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1100px) {
+  .reskin-grid {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+}
+
+.reskin-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.reskin-config {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.reskin-path {
+  width: 180px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.reskin-pricing {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.reskin-pricing th {
+  text-align: left;
+  color: var(--text-dim);
+  font-weight: 400;
+  padding: 0 6px 4px 0;
+}
+
+.reskin-pricing td {
+  padding: 0 6px 6px 0;
+}
+
+.reskin-pricing input {
+  width: 100%;
+  font-size: 12px;
+}
+
+/*
+ * 試跑結果。⛔ 這一塊是整個區塊存在的理由 —— 寫抽取規則最怕的是
+ * 「寫了沒反應」，所以抽到什麼要直接印出來，`pre` 要能捲但不准把版面撐爆。
+ */
+.reskin-try {
+  border-left: 3px solid var(--line);
+  padding: 8px 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.reskin-try.is-ok {
+  border-left-color: #4fbf7a;
+}
+
+.reskin-try.is-bad {
+  border-left-color: #e2766a;
+}
+
+.reskin-try pre {
+  margin: 4px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}

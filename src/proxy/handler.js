@@ -90,7 +90,7 @@ function upstreamFailedPage(site, error) {
 /**
  * 代理的兩個入口（主路由與根路徑 fallback）共用同一條管線。
  */
-function createProxyHandlers({ store, config, logger, fetchImpl, translation, siteRules }) {
+function createProxyHandlers({ store, config, logger, fetchImpl, translation, siteRules, reskin }) {
   async function proxy(req, res, { site, pathWithQuery }) {
     // 資源覆寫擺在最前面：命中就完全不碰上游（SPEC-rules §3.6）
     if (serveResourceOverride(req, res, { store, site, pathWithQuery, logger })) return;
@@ -141,6 +141,9 @@ function createProxyHandlers({ store, config, logger, fetchImpl, translation, si
         buffer,
         pathWithQuery,
         store,
+        // 重繪要排在翻譯與規則**之前**（SPEC-reskin §5 的執行順序）。
+        // 沒開 / 沒命中就回 null，`transformHtml` 會照舊走代理模式。
+        reskin: reskin?.reskinHtml,
         translate: translation?.translateHtml,
         rules: siteRules?.applyToHtml,
       });

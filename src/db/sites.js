@@ -15,10 +15,16 @@ const UPDATABLE_COLUMNS = Object.freeze([
   'glossary',
   // v6：開發模式（SPEC-rules §8.2）—— 所有回應改成 revalidate
   'dev_mode',
+  // v8：重繪模式（SPEC-reskin §6）。`reskin_config` / `reskin_pricing` 存 JSON
+  // 字串，而且**編不過也存得起來**（同壞規則的紀律）—— 所以 DB 層原樣轉述。
+  'reskin_enabled',
+  'reskin_theme',
+  'reskin_config',
+  'reskin_pricing',
 ]);
 
 /** 存成 0/1 的欄位（SQLite 沒有 boolean） */
-const FLAG_COLUMNS = new Set(['enabled', 'translate_enabled', 'dev_mode']);
+const FLAG_COLUMNS = new Set(['enabled', 'translate_enabled', 'dev_mode', 'reskin_enabled']);
 
 function toFlag(value) {
   return value === true || value === 1 ? 1 : 0;
@@ -41,6 +47,14 @@ function mapRow(row) {
     translate_model: row.translate_model,
     glossary: parseGlossary(row.glossary),
     dev_mode: row.dev_mode === 1,
+    // v8：重繪。`reskin_config` / `reskin_pricing` 刻意**原樣回字串**，
+    // 不在這裡 parse —— 它們可能是編不過的 JSON（壞設定要存得起來才改得動），
+    // 而 DB 層丟例外的話整個網站清單都會打不開。編譯是 `reskin/` 的事。
+    // `reskin_theme` 的 NULL ＝「用預設版型」，語意同 `translate_model`。
+    reskin_enabled: row.reskin_enabled === 1,
+    reskin_theme: row.reskin_theme ?? null,
+    reskin_config: row.reskin_config ?? null,
+    reskin_pricing: row.reskin_pricing ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

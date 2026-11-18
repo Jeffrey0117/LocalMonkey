@@ -7,6 +7,7 @@
 
 const { MAX_PATTERN_LENGTH } = require('./glob.js');
 const { normalizeGlossary } = require('../translate/glossary.js');
+const { isKnownTheme, listThemes } = require('../reskin/themes/index.js');
 
 const SLUG_PATTERN = /^[a-z0-9-]{1,40}$/;
 const RESERVED_SLUGS = new Set(['admin', 'p', '__lm']);
@@ -175,6 +176,29 @@ function checkModelName(input, errors) {
   return input.trim();
 }
 
+/**
+ * 重繪的版型（SPEC-reskin §6：「版型選擇（目前只有 shopee，但要做成可選的）」）。
+ *
+ * ⛔ 這裡**要擋**認不出來的版型名（跟 `reskin_config` 的「壞設定也存得起來」
+ * 相反）：設定是使用者一個字一個字寫出來的東西、改得動；版型是下拉選單選的，
+ * 收到一個不存在的值只會是程式打錯 —— 存下去的話畫面會悄悄退回預設版型，
+ * 而使用者以為自己換成功了。NULL / 空字串 ＝ 用預設（語意同 translate_model）。
+ */
+function checkReskinTheme(input, errors) {
+  if (input === null || input === '') return null;
+
+  if (!isKnownTheme(input)) {
+    errors.push({
+      field: 'reskin_theme',
+      message: `reskin_theme 只能是 ${listThemes()
+        .map((theme) => theme.id)
+        .join(' / ')}，留空＝用預設`,
+    });
+    return null;
+  }
+  return input;
+}
+
 /** 術語表：UI 給「一行一個」的字串，API 也接受陣列。正規化在 translate/glossary.js */
 function checkGlossary(input, errors) {
   if (typeof input !== 'string' && !Array.isArray(input)) {
@@ -278,6 +302,13 @@ function validateSiteUpdate(input) {
 
   // v6：開發模式（SPEC-rules §8.2）
   if ('dev_mode' in input) patch.dev_mode = checkEnabled(input.dev_mode, errors, 'dev_mode');
+
+  // v8：重繪（SPEC-reskin §6）。抽取設定與價格走專屬端點（`routes/reskin-api.js`）
+  // —— 這裡只收開關與版型，因為那兩個是「一個布林 + 一個下拉選單」。
+  if ('reskin_enabled' in input) {
+    patch.reskin_enabled = checkEnabled(input.reskin_enabled, errors, 'reskin_enabled');
+  }
+  if ('reskin_theme' in input) patch.reskin_theme = checkReskinTheme(input.reskin_theme, errors);
 
   if (Object.keys(patch).length === 0 && errors.length === 0) {
     errors.push({ field: 'body', message: '沒有任何要更新的欄位' });

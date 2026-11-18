@@ -180,5 +180,31 @@ window.LocalMonkeyApi = (function createApi() {
         'GET',
         `/sites/${id(siteId)}/resource-candidates?path=${encodeURIComponent(path)}`,
       ).then((data) => data.candidates),
+
+    /* ---------------- v8：重繪模式（SPEC-reskin） ---------------- */
+
+    getReskin: (siteId) => request('GET', `/sites/${id(siteId)}/reskin`),
+
+    /**
+     * 存抽取設定。
+     *
+     * ⛔ **編不過也會存起來**（同壞規則的紀律）：回應帶 `config_error`，
+     * UI 要標紅而不是把使用者手上那份半成品丟掉。所以這支不會因為設定壞掉
+     * 而 throw —— 呼叫端要自己看 `config_error`。
+     */
+    saveReskinConfig: (siteId, config) =>
+      request('PUT', `/sites/${id(siteId)}/reskin/config`, { config }),
+
+    /** 價格方案相反：它是表單填出來的結構化資料，壞掉就擋在門口（會 throw） */
+    saveReskinPricing: (siteId, pricing) =>
+      request('PUT', `/sites/${id(siteId)}/reskin/pricing`, { pricing }),
+
+    applyReskinPreset: (siteId) => request('POST', `/sites/${id(siteId)}/reskin/preset`),
+
+    clearReskinCache: (siteId) => request('POST', `/sites/${id(siteId)}/reskin/cache/clear`),
+
+    /** 「試一下」：回抽到幾項、每個欄位抽到什麼、沒抽到的話是哪一種原因 */
+    dryRunReskin: (siteId, { path, config }) =>
+      request('POST', `/sites/${id(siteId)}/reskin/dry-run`, { path, config }),
   };
 })();

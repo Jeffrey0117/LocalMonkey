@@ -358,6 +358,19 @@ tests/
 | DELETE | `/admin/api/sites/:id/rules/:ruleId` | 刪一條 |
 | POST | `/admin/api/sites/:id/rules/reorder` | 整批重排（`{ ids }`） |
 | POST | `/admin/api/sites/:id/rules/dry-run` | 「試一下」：每條文字規則命中幾段 |
+
+### 重繪（v8）
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/admin/api/sites/:id/reskin` | 開關、版型清單、抽取設定、價格、快取筆數 |
+| PUT | `/admin/api/sites/:id/reskin/config` | 存抽取設定（**編不過也會存**，回 `config_error`），順手清快取 |
+| PUT | `/admin/api/sites/:id/reskin/pricing` | 存價格方案（**壞掉會擋**，`null` ＝回預設） |
+| POST | `/admin/api/sites/:id/reskin/preset` | 套用這個站的預設抽取設定（整份取代） |
+| POST | `/admin/api/sites/:id/reskin/cache/clear` | 清掉抽出來的資料 |
+| POST | `/admin/api/sites/:id/reskin/dry-run` | 「試一下」：抽到幾項、每個欄位抽到什麼 |
+
+開關與版型走 `PATCH /admin/api/sites/:id`（`reskin_enabled` / `reskin_theme`）。
 | GET | `/admin/api/sites/:id/resources` | 列出資源覆寫 |
 | PUT | `/admin/api/sites/:id/resources?path=/images/x.png` | 上傳（body 是圖片本身） |
 | PATCH | `/admin/api/sites/:id/resources/:resourceId` | 啟用 / 停用 |
@@ -529,6 +542,82 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 
 沒放行的時候**不會靜默失敗**：存檔時 `warnings` 會講、控制台的權限列會把那個
 `@connect` 標成紅字「未放行」，並附上要設的 env。
+
+---
+
+## 重繪：把上游當資料來源（v8）
+
+前面兩種模式都是「**改**上游送來的那一頁」。第三種不一樣：**不改版面，而是把
+上游當資料來源，用你自己的版型重畫**。
+
+```
+代理 / 規則（v1~v7）   上游 HTML → 改一改 → 送出          上游 ＝ 頁面來源
+重繪（v8）             上游 HTML → 抽資料 → 我們的版型渲染  上游 ＝ 資料來源
+```
+
+需要它的時機很好認：**你想要的元素在上游 DOM 裡根本不存在**。想把一個 2008 年的
+表格式網站變成卡片網格 + 價格標 + 購買區，中間沒有任何 CSS 可以跨過去 ——
+不是難，是那些東西不在那裡。
+
+### 三層，界線很硬
+
+```
+抽取層  上游 HTML + 宣告式選擇器設定 → 正規化資料   ← 綁上游，換資料來源就整份丟掉
+版型層  資料 → HTML                                ← 資產，完全不知道上游是誰
+```
+
+**版型層不准出現任何上游的字樣或選擇器**（有一條測試掃整個 `themes/` 目錄盯著）。
+這樣把資料來源換成你自己的東西時，版面與商城機制原封不動。
+
+### 怎麼開
+
+1. 控制台 →「網站」分頁 → 那一站的「**重繪**」→ 打開開關
+2. 按「套用預設設定」（有內建的話），或自己寫一份抽取設定
+3. 按「**試一下**」看抽到什麼 —— 這一步才是重點，見下
+
+抽取設定是一個陣列，**順序就是比對順序**，第一個 `match` 命中的勝出：
+
+```jsonc
+[{
+  "kind": "listing",              // listing | product
+  // ⚠️ 這是 JSON，所以正則的反斜線要寫兩個（`\\d` 才是 `\d`）
+  "match": "^/(page/\\d+)?$",     // 路徑正則
+  "item":  ".card",               // listing：每一項的容器
+  "id":    "/item-(\\d+)",        // 從網址取商品編號
+  "fields": {
+    "name":  { "sel": "h2 a", "attr": "text" },
+    "url":   { "sel": "h2 a", "attr": "href", "as": "url" },
+    "image": { "sel": "img",  "attr": "src",  "as": "url" }
+  },
+  "page": {
+    "totalPages": { "sel": ".info", "attr": "text", "extract": "of (\\d+)", "as": "number" }
+  }
+}]
+```
+
+欄位的五個鍵各做一件事：
+
+| 鍵 | 作用 |
+|---|---|
+| `sel` | 選擇器。跟文字規則的「限定範圍」**同一套**：`tag` / `.class` / `#id` / `*` 與空白、`>` 組合子 |
+| `attr` | `text`（遞迴文字）或任意屬性名 |
+| `as` | `text`（預設）/ `url`（補成代理網址）/ `number`（去千分位）/ `link`（`{name,url}`） |
+| `many` | 要全部（標籤、分類列）。預設只要**第一個有值的** |
+| `when` | 候選元素的守門員 `{ attr, match }` —— 同容器同選擇器但只有 `href` 分得出來時用 |
+| `extract` | 對抽出來的值再跑一次正則，取第 1 個捕獲群組 —— 值是**裸的文字節點**時用 |
+
+### 幾個重點
+
+- **沒有任何一筆設定命中的路徑，照舊走代理模式。** `/about`、`/contact` 這種頁面
+  不用管它。抽取失敗（選擇器對不上）也一樣退回代理 —— **絕不讓頁面壞掉或 500**。
+- **翻譯、改造規則、資源覆寫、userscript 注入全部照舊跑**，只是作用在我們畫的
+  那份 HTML 上（文字規則的選擇器對的是我們自己的 class）。
+  ⚠️ 反過來也成立：你那條全站的文字規則會一起改到版型自己的文案。
+- **抽出來的資料有快取**，key 含上游 HTML 的雜湊 → 上游沒變就不重抽，變了自動失效。
+  改完抽取設定會自動清掉快取。
+- **縮圖照舊走 `/p/<site>/…`**，不會直接連上游（不洩漏你在看什麼，也保住資源覆寫）。
+- **價格是你自己定的**（上游沒有價格），購物車與會員狀態只在 `localStorage`，
+  **不接金流**。下載閘門（非會員點下載 → 開方案面板）也在那裡。
 
 ---
 

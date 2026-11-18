@@ -8,6 +8,7 @@ const translations = require('./translations.js');
 const crawlJobs = require('./crawl-jobs.js');
 const siteRules = require('./site-rules.js');
 const resourceOverrides = require('./resource-overrides.js');
+const reskin = require('./reskin.js');
 
 /**
  * 把 repository 函式綁上同一個 db handle，路由層就不用到處傳 db。
@@ -94,6 +95,19 @@ function createStore(db) {
       versions: (siteId) => resourceOverrides.resourceVersions(db, siteId),
       update: (id, patch) => resourceOverrides.updateResourceOverride(db, id, patch),
       remove: (id) => resourceOverrides.removeResourceOverride(db, id),
+    },
+
+    /**
+     * v8：重繪模式抽出來的資料（SPEC-reskin §3.3）。
+     * 純衍生快取 —— 清掉只是下一次重算，不會掉任何使用者的設定。
+     */
+    reskinCache: {
+      key: (input) => reskin.cacheKey(input),
+      get: (key) => reskin.getReskinCache(db, key),
+      put: (input) => reskin.putReskinCache(db, input),
+      trim: (siteId, limit) => reskin.trimReskinCache(db, siteId, limit),
+      clear: (siteId) => reskin.clearReskinCache(db, siteId),
+      count: (siteId) => reskin.countReskinCache(db, siteId),
     },
 
     crawlJobs: {

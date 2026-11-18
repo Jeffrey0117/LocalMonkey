@@ -36,14 +36,13 @@ function seedSite(db) {
 }
 
 /**
- * ⛔ 這條故意釘**當下**的版本號（而不是跟著 SCHEMA_VERSION 浮動）：加 migration
- * 的時候要被迫回來看一眼，確認自己是「加新版本」而不是「改舊的那一版」。
- * 加了 v8 就把這個釘子搬到 migration-v8.test.js。
+ * 「當下的最新版本」那個釘子已經照這個檔案原本的註解搬到 migration-v8.test.js
+ * （加 v8 的時候）；這裡只管 v7 自己 —— 不然每加一版就有 N 條測試一起紅，
+ * 而那些紅沒有任何資訊（CLAUDE.md 地雷 58）。
  */
-test('schema 版本是 7', () => {
-  const db = new Database(':memory:');
-  assert.equal(migrate(db), 7);
-  assert.equal(SCHEMA_VERSION, 7);
+test('v7 這一版把 user_version 推到 7', () => {
+  assert.equal(upTo(7).pragma('user_version', { simple: true }), 7);
+  assert.ok(SCHEMA_VERSION >= 7, `SCHEMA_VERSION = ${SCHEMA_VERSION}`);
 });
 
 test('site_rules 現在收 no-translate（而且五種之外還是擋）', () => {

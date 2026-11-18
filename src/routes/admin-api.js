@@ -18,6 +18,7 @@ const { DuplicateIdError, NotFoundError } = require('../db/errors.js');
 const { parseUserscript } = require('../userscript/parse.js');
 const { createTranslateApiRouter } = require('./translate-api.js');
 const { createRulesApiRouter } = require('./rules-api.js');
+const { createReskinApiRouter } = require('./reskin-api.js');
 const { deployUserscript, DeployError } = require('../services/deploy.js');
 const {
   buildDeliveryUrl,
@@ -87,7 +88,7 @@ function createErrorHandler(logger) {
 /**
  * `/admin/api/*`。已經過 admin auth（token + 跨站檢查），這裡只管資料。
  */
-function createAdminApiRouter({ store, config, logger, fetchImpl, translation, crawler, siteRules }) {
+function createAdminApiRouter({ store, config, logger, fetchImpl, translation, crawler, siteRules, reskin }) {
   const router = express.Router();
   router.use(express.json({ limit: '2mb' }));
 
@@ -99,6 +100,13 @@ function createAdminApiRouter({ store, config, logger, fetchImpl, translation, c
   // v5：站台改造規則與資源覆寫（SPEC-rules §4）
   if (siteRules) {
     router.use(createRulesApiRouter({ store, siteRules, config, logger, fetchImpl, translation }));
+  }
+
+  // v8：重繪模式的設定、價格、試一下（SPEC-reskin §6）
+  // ⛔ 新的子 router 要一路轉下去才會生效：app.js → admin-page.js → 這裡
+  //    三層都要改，少一層的症狀是所有端點靜默 404（地雷 39）。
+  if (reskin) {
+    router.use(createReskinApiRouter({ store, reskin, config, logger, fetchImpl }));
   }
 
   const ssrfOptions = { allowPrivate: config.allowPrivate };

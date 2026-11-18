@@ -1,9 +1,13 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const express = require('express');
 
 const { wrapUserCode } = require('../lib/user-script.js');
 const { buildShimConfig, renderShim } = require('../lib/gm-shim.js');
+const { THEMES, isKnownTheme } = require('../reskin/themes/index.js');
 
 /**
  * `/__lm/*`：LocalMonkey 自己的端點（腳本、GM shim、@require 資產）。
@@ -11,6 +15,19 @@ const { buildShimConfig, renderShim } = require('../lib/gm-shim.js');
  */
 
 const SHA256_FILE_PATTERN = /^([0-9a-f]{64})(\.[A-Za-z0-9]+)?$/;
+
+/**
+ * 重繪版型的前端（SPEC-reskin §4）。跟 GM shim 同一個做法：瀏覽器端的程式
+ * 住在 `src/public/`，啟動後讀一次檔、沒有 build step。
+ */
+const SHOP_SCRIPT_PATH = path.join(__dirname, '..', 'public', 'reskin-shop.js');
+
+let cachedShopScript = null;
+
+function shopScript() {
+  if (cachedShopScript === null) cachedShopScript = fs.readFileSync(SHOP_SCRIPT_PATH, 'utf8');
+  return cachedShopScript;
+}
 
 /**
  * 資產是「從別人的 CDN 抓回來的檔案」，而且是從**我們自己的 origin** 送出去的。
@@ -127,6 +144,42 @@ function createInternalRouter({ store, favicons }) {
     // 內容定址：網址變了才代表內容變了，所以可以放心長期快取
     res.setHeader('cache-control', 'public, max-age=31536000, immutable');
     res.end(asset.content);
+  });
+
+  /**
+   * 重繪版型的樣式表與前端（SPEC-reskin §4）。
+   *
+   * 外部檔案而不是內嵌：可以被瀏覽器快取、錯誤行號正確，而且不會跟上游的
+   * `</style>` / `</script>` 攪在一起（同「注入用外部 script src」那個決策）。
+   *
+   * ⛔ 快取政策是 `no-cache` 而不是長期快取：版型沒有內容雜湊可以掛在網址上，
+   * 而「改了版型但瀏覽器拿的是舊的」正是這個專案踩過兩次的坑（地雷 33 / 46）。
+   * 這兩個檔案都很小，一次 304 的成本遠低於那個症狀的查錯成本。
+   */
+  router.get('/reskin/shop.js', (req, res) => {
+    res.setHeader('content-type', 'application/javascript; charset=utf-8');
+    res.setHeader('cache-control', 'no-cache');
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.send(shopScript());
+  });
+
+  router.get('/reskin/:themeFile', (req, res) => {
+    const { themeFile } = req.params;
+    if (!themeFile.endsWith('.css')) {
+      sendNotFound(res, '沒有這個版型樣式表');
+      return;
+    }
+
+    const id = themeFile.slice(0, -'.css'.length);
+    if (!isKnownTheme(id)) {
+      sendNotFound(res, `沒有「${id}」這個版型`);
+      return;
+    }
+
+    res.setHeader('content-type', 'text/css; charset=utf-8');
+    res.setHeader('cache-control', 'no-cache');
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.send(THEMES[id].css);
   });
 
   router.use((req, res) => {

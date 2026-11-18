@@ -366,6 +366,48 @@ DROP TABLE site_rules_v6;
 CREATE INDEX idx_site_rules_site ON site_rules (site_id, order_index, id);
 `;
 
+/**
+ * v8：重繪模式（SPEC-reskin）。
+ *
+ * ⛔ **這一版不碰 `site_rules`。** v6 與 v7 各重建了一整張 `site_rules`，那是
+ * 因為它們加了新的 `kind`，而 `CHECK` 不能 ALTER（地雷 58）。重繪**不是**一種
+ * 規則 —— 它是第三種模式，設定掛在 `sites` 上。所以這一版只有
+ * `ADD COLUMN` 與 `CREATE TABLE`，整張表重建的風險（「既有規則在搬家時掉了」）
+ * 一個都沒有。
+ *
+ * 四個欄位：
+ *   - `reskin_enabled`  預設關（規格 §6：「開關（預設關）」）
+ *   - `reskin_theme`    NULL ＝ 用預設版型，語意同 `translate_model`
+ *   - `reskin_config`   抽取設定（JSON 陣列）。**編不過也要存得起來** ——
+ *                       跟壞規則一樣（SPEC-rules §4），退回 400 的話使用者
+ *                       只看到一個錯誤、沒有上下文可以改。所以沒有 CHECK。
+ *   - `reskin_pricing`  價格方案（JSON 物件）。NULL ＝ 用 `pricing.js` 的預設
+ *
+ * `reskin_cache` 的 key 含**上游 HTML 的 sha256**（規格 §3.3），所以上游一變
+ * 就自然錯開，不需要任何失效邏輯。`site_id` 給 ON DELETE CASCADE ——
+ * 快取是純衍生資料，刪站連帶清掉完全沒有損失（這跟 `translate_queue` 刻意
+ * 不設外鍵是相反的判斷：那裡的佇列是「還沒做完的工作」，不是衍生資料）。
+ */
+const SCHEMA_V8 = `
+ALTER TABLE sites ADD COLUMN reskin_enabled INTEGER NOT NULL DEFAULT 0
+  CHECK (reskin_enabled IN (0, 1));
+ALTER TABLE sites ADD COLUMN reskin_theme TEXT;
+ALTER TABLE sites ADD COLUMN reskin_config TEXT;
+ALTER TABLE sites ADD COLUMN reskin_pricing TEXT;
+
+CREATE TABLE reskin_cache (
+  key         TEXT PRIMARY KEY,
+  site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  path        TEXT NOT NULL,
+  html_sha256 TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  data        TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);
+
+CREATE INDEX idx_reskin_cache_site ON reskin_cache (site_id, created_at);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -394,6 +436,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 7,
     up: (db) => db.exec(SCHEMA_V7),
+  }),
+  Object.freeze({
+    version: 8,
+    up: (db) => db.exec(SCHEMA_V8),
   }),
 ]);
 

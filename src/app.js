@@ -10,6 +10,7 @@ const { createProxyHandlers } = require('./proxy/handler.js');
 const { createFaviconService } = require('./services/favicon.js');
 const { createTranslationService } = require('./translate/service.js');
 const { createSiteRulesService } = require('./rules/service.js');
+const { createReskinService } = require('./reskin/service.js');
 const { createCrawler } = require('./translate/crawl.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
@@ -68,6 +69,13 @@ function createApp({
   const siteRules = createSiteRulesService({ store, logger });
   app.locals.siteRules = siteRules;
 
+  /**
+   * 重繪模式（v8，SPEC-reskin）。同樣沒有狀態（每個請求重讀 + 重編譯設定），
+   * 抽出來的資料存在 DB 的 `reskin_cache` 裡而不是這個 instance 上。
+   */
+  const reskin = createReskinService({ store, logger });
+  app.locals.reskin = reskin;
+
   const { handleProxyRoute, handleFallbackRoute } = createProxyHandlers({
     store,
     config,
@@ -75,6 +83,7 @@ function createApp({
     fetchImpl,
     translation,
     siteRules,
+    reskin,
   });
 
   // 保留路徑：不進代理。
@@ -95,6 +104,7 @@ function createApp({
       translation,
       crawler,
       siteRules,
+      reskin,
     }),
   );
 

@@ -132,4 +132,11 @@ function matchesScope(ancestors, parsed) {
   );
 }
 
-module.exports = { parseScope, matchesScope, parseSelector, parseCompound };
+/**
+ * `matchesSuffix` 是給 v7 的重繪抽取層用的（`reskin/query.js`）：那邊問的是
+ * 「**這個元素**符合選擇器嗎」（祖先鏈的最後一節就是候選元素），而
+ * `matchesScope` 問的是「這一段文字在不在某個東西**裡面**」（鏈上任何一節符合
+ * 就算）。兩者差一個「比對要釘在最後一節」，所以重繪沿用這支而不是另外寫一套
+ * 選擇器比對 —— 使用者在 `scope` 學到的語法，在抽取設定裡是同一套。
+ */
+module.exports = { parseScope, matchesScope, matchesSuffix, parseSelector, parseCompound };
