@@ -1180,6 +1180,36 @@ tbody tr:last-child td {
   opacity: 0.45;
 }
 
+/*
+ * `css` 規則的 pattern 是一整段 CSS，所以是 textarea。
+ * `resize: vertical` ＋ `align-self: stretch`：使用者要能拉高來看長一點的
+ * CSS，但**不能**拉寬 —— 那會把整個 grid 的欄寬撐歪（.rule-row 的欄寬是固定
+ * 比例，就是為了讓每一列對得齊）。
+ */
+.rule-css {
+  resize: vertical;
+  align-self: stretch;
+  min-height: 48px;
+  line-height: 1.4;
+  white-space: pre;
+}
+
+/*
+ * 開發模式那一排（SPEC-rules §8.2）。說明文字要能換行成好幾行，所以
+ * `align-items: flex-start` —— 用預設的 center 會讓開關在長說明旁邊浮在中間。
+ */
+.dev-mode-row {
+  align-items: flex-start;
+  padding: 6px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+.dev-mode-row .muted {
+  flex: 1 1 320px;
+  line-height: 1.5;
+}
+
 .rule-path {
   width: 120px;
 }

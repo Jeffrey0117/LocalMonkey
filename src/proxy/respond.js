@@ -113,7 +113,10 @@ function setDebugHeaders(res, stats) {
     res.setHeader('x-lm-translate', `${stats.translate.hits}/${stats.translate.total}`);
   }
   if (stats.rules) {
-    res.setHeader('x-lm-rules', `hide=${stats.rules.hide} text=${stats.rules.text}`);
+    res.setHeader(
+      'x-lm-rules',
+      `hide=${stats.rules.hide} css=${stats.rules.css ?? 0} text=${stats.rules.text}`,
+    );
   }
 }
 

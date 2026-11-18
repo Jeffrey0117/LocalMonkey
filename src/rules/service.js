@@ -20,12 +20,15 @@
  * 頁面都一樣。
  */
 
-const { compileRules, activeHideRules } = require('./compile.js');
+const { compileRules, activeHideRules, activeCssRules } = require('./compile.js');
 const { applyTextRules } = require('./apply.js');
-const { buildHideCss } = require('./hide-css.js');
+const { buildRulesCss } = require('./hide-css.js');
 const { injectStyleTag } = require('./style-tag.js');
 const { isUtf8Document } = require('../translate/charset.js');
 const { fromLatin1, toLatin1 } = require('../translate/bytes.js');
+
+/** 這兩種變成注入的 CSS，不參與文字比對 → 沒有「命中幾段」可以回 */
+const STYLE_KINDS = new Set(['hide', 'css']);
 
 /**
  * @param {{ store: object, logger: object }} context
@@ -62,10 +65,11 @@ function createSiteRulesService({ store, logger }) {
         logger.warn(`${site.id} 的規則 ${id} 超過時間預算，這一份文件剩下的段跳過它`);
       }
 
-      const css = buildHideCss(compiled);
+      const css = buildRulesCss(compiled);
 
       onStats?.({
         hide: activeHideRules(compiled).length,
+        css: activeCssRules(compiled).length,
         text: text.applied,
         hits: text.hits,
         charsetSkipped: !utf8,
@@ -86,6 +90,9 @@ function createSiteRulesService({ store, logger }) {
    * 從上游抓一份頁面下來。`hide` 規則的命中數**不在這裡算**：那要真的 CSS
    * 比對，所以交給瀏覽器（控制台用 DOMParser + querySelectorAll 自己數）。
    *
+   * `css` 規則**沒有命中數這個概念**（一段 CSS 不是選擇器，可能含好幾條規則
+   * 甚至 media query），所以它回 `null` ——「不知道」跟「0 命中」要分得出來。
+   *
    * @param {string} html 真文字
    * @param {Array<object>} rows `site_rules` 的列
    */
@@ -101,13 +108,14 @@ function createSiteRulesService({ store, logger }) {
         scope: rule.scope,
         enabled: rule.enabled,
         error: rule.error,
-        // hide 的命中數由瀏覽器算（這裡回 null 而不是 0，UI 才分得出「不知道」）
-        matched: rule.kind === 'hide' ? null : result.hits[rule.id] ?? 0,
+        // hide 的命中數由瀏覽器算、css 根本沒有命中數
+        // （這裡回 null 而不是 0，UI 才分得出「不知道」）
+        matched: STYLE_KINDS.has(rule.kind) ? null : result.hits[rule.id] ?? 0,
       })),
       applied: result.applied,
       skippedSegments: result.skipped,
       timedOut: result.timedOut,
-      css: buildHideCss(compiled),
+      css: buildRulesCss(compiled),
     };
   }
 

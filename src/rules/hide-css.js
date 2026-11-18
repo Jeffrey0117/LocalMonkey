@@ -12,7 +12,7 @@
  * 把它們排成 CSS。
  */
 
-const { activeHideRules } = require('./compile.js');
+const { activeHideRules, activeStyleRules } = require('./compile.js');
 
 const DECLARATION = '{ display: none !important; }';
 
@@ -30,4 +30,22 @@ function buildHideCss(compiled) {
   return selectors.map((selector) => `${selector} ${DECLARATION}`).join('\n');
 }
 
-module.exports = { buildHideCss, DECLARATION };
+/**
+ * `hide` ＋ `css` 兩種規則合成一份要注入的 CSS（規格 §9）。
+ *
+ * ⛔ **順序照 `order_index`，而且那是語意不是美觀**：兩條都帶 `!important` 時
+ * 後面的勝。使用者會用一條 `css` 規則去覆蓋前面某條 `hide`（先藏整個容器、
+ * 再把其中一塊放回來），所以不能把 hide 全部排在前面再接 css。
+ *
+ * @param {Array<object>} compiled
+ * @returns {string|null}
+ */
+function buildRulesCss(compiled) {
+  const blocks = activeStyleRules(compiled).map((rule) =>
+    rule.kind === 'hide' ? `${rule.selector} ${DECLARATION}` : rule.css,
+  );
+
+  return blocks.length === 0 ? null : blocks.join('\n');
+}
+
+module.exports = { buildHideCss, buildRulesCss, DECLARATION };

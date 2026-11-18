@@ -13,6 +13,7 @@
  */
 
 const { RULE_KINDS, MAX_REPLACEMENT_LENGTH } = require('../rules/compile.js');
+const { MAX_CSS_LENGTH } = require('../rules/css-text.js');
 
 const MAX_PATTERN_LENGTH = 500;
 const MAX_SCOPE_LENGTH = 200;
@@ -55,7 +56,34 @@ function result(errors, value) {
   return errors.length > 0 ? { ok: false, errors, value: null } : { ok: true, errors: [], value };
 }
 
-function checkPattern(input, errors) {
+/**
+ * `css` 型別的 pattern 存的是**一整段 CSS**，所以兩件事跟其他型別不一樣：
+ * 可以含換行與 tab（UI 是 textarea），而且上限寬得多（一段 CSS 很容易超過
+ * 500 字）。其他型別維持原本的嚴格 —— 一條含換行的選擇器或正則幾乎都是貼錯了。
+ *
+ * ⛔ 這裡**不**檢查 `</style>`：規格 §4 要的是「編不過的規則存得起來、在 UI
+ * 標紅」，退回 400 的話使用者只看到錯誤、沒有那條半成品可以改。真正的防線在
+ * `rules/css-text.js`（編譯時擋，壞的那條不會進注入的 `<style>`）。
+ */
+function checkCssPattern(input, errors) {
+  if (typeof input !== 'string' || input.trim().length === 0) {
+    errors.push({ field: 'pattern', message: 'CSS 不能是空的' });
+    return null;
+  }
+  if (input.length > MAX_CSS_LENGTH) {
+    errors.push({ field: 'pattern', message: `CSS 最長 ${MAX_CSS_LENGTH} 個字` });
+    return null;
+  }
+  if (input.includes('\0')) {
+    errors.push({ field: 'pattern', message: 'CSS 不能含 NUL 字元' });
+    return null;
+  }
+  return input;
+}
+
+function checkPattern(input, errors, kind) {
+  if (kind === 'css') return checkCssPattern(input, errors);
+
   if (typeof input !== 'string' || input.trim().length === 0) {
     errors.push({ field: 'pattern', message: 'pattern 不能是空的' });
     return null;
@@ -152,7 +180,7 @@ function validateRuleCreate(input) {
   const errors = [];
   const value = {
     kind: checkKind(input.kind, errors),
-    pattern: checkPattern(input.pattern, errors),
+    pattern: checkPattern(input.pattern, errors, input.kind),
     replacement: checkReplacement(input.replacement, errors),
     scope: checkScope(input.scope, errors),
     note: checkNote(input.note, errors),
@@ -163,7 +191,13 @@ function validateRuleCreate(input) {
   return result(errors, value);
 }
 
-function validateRuleUpdate(input) {
+/**
+ * @param {unknown} input
+ * @param {{ currentKind?: string }} [context] 這一列**現在**的 kind。
+ *   只改 pattern、沒帶 kind 的時候要靠它才知道該用哪套規則 ——
+ *   不然一條既有的 `css` 規則改個換行就會被退回 400。
+ */
+function validateRuleUpdate(input, { currentKind } = {}) {
   if (!isPlainObject(input)) {
     return result([{ field: 'body', message: '請求內容必須是 JSON 物件' }]);
   }
@@ -175,7 +209,9 @@ function validateRuleUpdate(input) {
 
   const patch = {};
   if ('kind' in input) patch.kind = checkKind(input.kind, errors);
-  if ('pattern' in input) patch.pattern = checkPattern(input.pattern, errors);
+  if ('pattern' in input) {
+    patch.pattern = checkPattern(input.pattern, errors, input.kind ?? currentKind);
+  }
   if ('replacement' in input) patch.replacement = checkReplacement(input.replacement, errors);
   if ('scope' in input) patch.scope = checkScope(input.scope, errors);
   if ('note' in input) patch.note = checkNote(input.note, errors);

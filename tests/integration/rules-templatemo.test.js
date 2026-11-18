@@ -438,9 +438,21 @@ test('整組規則跑完，頁面結構沒被弄壞（標籤數量不變）', as
   }
 });
 
+/**
+ * ⛔ 數字從 preset 算，不要寫死：這組規則本來就會長（使用者會一直加），
+ * 寫死的話每次加一條規則就要回來改測試，而那種「改一下數字就綠了」的測試
+ * 很快就會被改到失去意義。
+ */
 test('規則命中數回在 x-lm-rules header 上', async (t) => {
   const { get } = await scenario(t);
+  const { TEMPLATEMO_RULES } = require('../../src/rules/presets/index.js');
+  const countOf = (kind) => TEMPLATEMO_RULES.filter((rule) => rule.kind === kind).length;
+
   const { response } = await get('/tm-634-lantern-river');
 
-  assert.match(response.headers.get('x-lm-rules'), /hide=10 text=\d+/);
+  assert.match(
+    response.headers.get('x-lm-rules'),
+    new RegExp(`hide=${countOf('hide')} css=${countOf('css')} text=\\d+`),
+    response.headers.get('x-lm-rules'),
+  );
 });

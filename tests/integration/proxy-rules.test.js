@@ -300,3 +300,89 @@ test('翻譯沒開的站不要帶 x-lm-translate（那個 header 在說「翻了
 
   assert.equal(response.headers.get('x-lm-translate'), null);
 });
+
+/* ------------------------------ css 規則（§9） ------------------------------ */
+
+test('css 規則的內容原樣進注入的 <style>', async (t) => {
+  const { fetchPage } = await scenario(t, {
+    rules: [{ kind: 'css', pattern: '.tm_banner { margin: 0 !important; height: 0 !important; }' }],
+  });
+
+  const { text } = await fetchPage();
+  assert.match(text, /<style id="lm-site-rules">[\s\S]*\.tm_banner \{ margin: 0 !important/);
+});
+
+test('hide 與 css 共用同一個 <style>（只注入一個）', async (t) => {
+  const { fetchPage } = await scenario(t, {
+    rules: [
+      { kind: 'hide', pattern: '.tm-menu' },
+      { kind: 'css', pattern: '.templatemo-logo{height:0}' },
+    ],
+  });
+
+  const { text } = await fetchPage();
+
+  assert.equal(text.match(/<style id="lm-site-rules">/g).length, 1);
+  assert.match(text, /\.tm-menu \{ display: none !important; \}/);
+  assert.match(text, /\.templatemo-logo\{height:0\}/);
+});
+
+test('多行 CSS 的換行留著（textarea 貼進來的就是多行）', async (t) => {
+  const { fetchPage } = await scenario(t, {
+    rules: [{ kind: 'css', pattern: '.a {\n  margin: 0;\n}' }],
+  });
+
+  assert.match((await fetchPage()).text, /\.a \{\n {2}margin: 0;\n\}/);
+});
+
+test('CSS 裡的中文跳脫成 \\XXXXXX（頁面可能宣告任何 charset）', async (t) => {
+  const { fetchPage } = await scenario(t, {
+    rules: [{ kind: 'css', pattern: '.templatemo-logo::after{content:"預覽"}' }],
+  });
+
+  const { text } = await fetchPage();
+  // ⛔ 正則裡要寫兩個反斜線 —— `\0` 在正則裡是 NUL 字元，不是「反斜線加 0」
+  assert.match(text, /content:"\\009810\\0089bd"/);
+});
+
+/**
+ * ⛔ 這是 `css` 型別唯一真正危險的地方：使用者寫的字會原樣進 `<style>`，
+ * 而 `<style>` 的內容對 HTML 分詞器來說是 raw text —— 唯一的出口是 `</style`。
+ *
+ * 這條測試看的是**送出去的 HTML 裡沒有多出一個 script tag**，而不是
+ * 「API 有沒有回 400」：規格 §4 要求壞規則存得起來（UI 標紅），所以防線一定
+ * 得在注入那一側。
+ */
+test('⛔ 含 </style> 的 css 規則不會變成 HTML 注入', async (t) => {
+  const { fetchPage } = await scenario(t, {
+    rules: [
+      { kind: 'css', pattern: '.a{}</style><script>window.__pwned=1</script><style>' },
+      { kind: 'css', pattern: '.safe{margin:0}' },
+    ],
+  });
+
+  const { text } = await fetchPage();
+
+  assert.equal(text.includes('__pwned'), false, '整條 CSS 不該出現在頁面上');
+  assert.equal(text.match(/<style/g).length, 1, '只准有我們自己那一個 <style>');
+  assert.equal(text.match(/<\/style>/g).length, 1);
+  assert.match(text, /\.safe\{margin:0\}/, '壞的那一條不該連坐好的那一條');
+});
+
+test('css 規則停用就不注入；壞掉的規則在 API 列表上帶著 error', async (t) => {
+  const { app, fetchPage } = await scenario(t, {
+    rules: [
+      { kind: 'css', pattern: '.off{margin:0}', enabled: 0 },
+      { kind: 'css', pattern: '.b{}</style>' },
+    ],
+  });
+
+  const { text } = await fetchPage();
+  assert.equal(text.includes('.off'), false);
+
+  const listed = await fetch(`${app.base}/admin/api/sites/demo/rules`, {
+    headers: { authorization: `Bearer ${app.adminToken}` },
+  }).then((response) => response.json());
+
+  assert.match(listed.rules.find((rule) => rule.pattern.includes('</style>')).error, /style/);
+});

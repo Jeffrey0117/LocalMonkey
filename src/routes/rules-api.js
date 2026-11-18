@@ -86,9 +86,14 @@ function createRulesApiRouter({ store, siteRules, config, logger, fetchImpl, tra
 
   function updateRule(req, res) {
     const site = requireSite(req, res);
-    if (!site || !requireRule(req, res, site)) return;
+    if (!site) return;
 
-    const result = validateRuleUpdate(req.body);
+    const existing = requireRule(req, res, site);
+    if (!existing) return;
+
+    // 只改 pattern、沒帶 kind 時，驗證要用「這一列現在的 kind」——
+    // `css` 的 pattern 可以含換行，其他型別不行
+    const result = validateRuleUpdate(req.body, { currentKind: existing.kind });
     if (!result.ok) {
       sendValidationFailed(res, result);
       return;

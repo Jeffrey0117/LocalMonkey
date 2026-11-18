@@ -19,9 +19,13 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
 
   const KINDS = [
     ['hide', '隱藏元素'],
+    ['css', '注入 CSS'],
     ['text-replace', '改寫文字（字面）'],
     ['text-rewrite', '改寫文字（正則）'],
   ];
+
+  /** 這兩種變成注入的 CSS：用不到 replacement 與 scope */
+  const STYLE_KINDS = new Set(['hide', 'css']);
 
   /**
    * 換了圖之後要講的那句話。
@@ -37,6 +41,10 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
 
   const PLACEHOLDERS = {
     hide: { pattern: 'CSS 選擇器，例 .tm-menu', replacement: '（隱藏不需要替換字）' },
+    css: {
+      pattern: 'CSS，例 .tm_banner { margin: 0 !important; height: 0 !important; }',
+      replacement: '（注入 CSS 不需要替換字）',
+    },
     'text-replace': { pattern: '要找的字，例 templatemo', replacement: '換成，例 templatee' },
     'text-rewrite': { pattern: '正則，例 ^(\\d{2,4})\\s+(.+)$', replacement: '例 $2[$1]' },
   };
@@ -57,6 +65,8 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     candidates: new Map(),
     /** siteId → 試跑結果 */
     dryRun: new Map(),
+    /** siteId → 「新增規則」那一排選了哪種 kind（`css` 要換成 textarea） */
+    newKind: new Map(),
     onChanged: () => {},
   };
 
@@ -86,35 +96,59 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       : '<span class="badge is-bad">0 命中</span>';
   }
 
-  function ruleRow(siteId, rule) {
-    const placeholder = PLACEHOLDERS[rule.kind] ?? PLACEHOLDERS.hide;
-    const isHide = rule.kind === 'hide';
-
-    return `
-      <div class="rule-row${rule.error ? ' has-error' : ''}" data-rule-id="${escapeHtml(rule.id)}">
-        <select data-action="rule-kind" class="rule-kind">${kindOptions(rule)}</select>
+  /**
+   * `css` 的 pattern 是**一整段 CSS**，所以要 textarea 不是單行輸入。
+   *
+   * ⛔ `value` 不能用在 textarea 上 —— 內容要放在標籤之間。寫成
+   * `<textarea value="…">` 不會報錯，只會畫出一個**空的**輸入框，
+   * 而使用者的 CSS 看起來就「不見了」。
+   */
+  function patternField(rule, placeholder) {
+    if (rule.kind !== 'css') {
+      return `
         <input
           data-action="rule-pattern"
           class="rule-input"
           value="${escapeHtml(rule.pattern)}"
           placeholder="${escapeHtml(placeholder.pattern)}"
           spellcheck="false"
-        />
+        />`;
+    }
+
+    return `
+      <textarea
+        data-action="rule-pattern"
+        class="rule-input rule-css"
+        rows="3"
+        placeholder="${escapeHtml(placeholder.pattern)}"
+        spellcheck="false"
+      >${escapeHtml(rule.pattern)}</textarea>`;
+  }
+
+  function ruleRow(siteId, rule) {
+    const placeholder = PLACEHOLDERS[rule.kind] ?? PLACEHOLDERS.hide;
+    // hide 與 css 都變成注入的 CSS → 用不到 replacement 與 scope
+    const isStyle = STYLE_KINDS.has(rule.kind);
+
+    return `
+      <div class="rule-row${rule.error ? ' has-error' : ''}" data-rule-id="${escapeHtml(rule.id)}">
+        <select data-action="rule-kind" class="rule-kind">${kindOptions(rule)}</select>
+        ${patternField(rule, placeholder)}
         <input
           data-action="rule-replacement"
           class="rule-input"
           value="${escapeHtml(rule.replacement ?? '')}"
           placeholder="${escapeHtml(placeholder.replacement)}"
           spellcheck="false"
-          ${isHide ? 'disabled' : ''}
+          ${isStyle ? 'disabled' : ''}
         />
         <input
           data-action="rule-scope"
           class="rule-input rule-scope"
           value="${escapeHtml(rule.scope ?? '')}"
-          placeholder="${isHide ? '（隱藏用不到）' : '限定範圍，例 #footer'}"
+          placeholder="${isStyle ? '（CSS 規則用不到）' : '限定範圍，例 #footer'}"
           spellcheck="false"
-          ${isHide ? 'disabled' : ''}
+          ${isStyle ? 'disabled' : ''}
         />
         <input
           data-action="rule-note"
@@ -231,6 +265,24 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       </div>`;
   }
 
+  function newKindOf(siteId) {
+    return state.newKind.get(siteId) ?? 'hide';
+  }
+
+  /**
+   * 新增規則那一排的 pattern 欄位。選了「注入 CSS」就換成 textarea ——
+   * 一段 CSS 塞單行輸入框是沒辦法讀的，而使用者第一次用 `css` 規則就是在這裡。
+   */
+  function newPatternField(siteId) {
+    const placeholder = PLACEHOLDERS[newKindOf(siteId)] ?? PLACEHOLDERS.hide;
+
+    return newKindOf(siteId) === 'css'
+      ? `<textarea data-action="new-pattern" class="rule-input rule-css" rows="3"
+           placeholder="${escapeHtml(placeholder.pattern)}" spellcheck="false"></textarea>`
+      : `<input data-action="new-pattern" class="rule-input"
+           placeholder="${escapeHtml(placeholder.pattern)}" spellcheck="false" />`;
+  }
+
   /** 展開後的那一大塊。回字串，由 sites-tab 塞進它自己的 row。 */
   function panel(site) {
     if (!state.open.has(site.id)) return '';
@@ -253,8 +305,8 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
         </div>
 
         <div class="rule-toolbar">
-          <select data-action="new-kind" class="rule-kind">${kindOptions({ kind: 'hide' })}</select>
-          <input data-action="new-pattern" class="rule-input" placeholder="pattern" spellcheck="false" />
+          <select data-action="new-kind" class="rule-kind">${kindOptions({ kind: newKindOf(site.id) })}</select>
+          ${newPatternField(site.id)}
           <input data-action="new-replacement" class="rule-input" placeholder="換成" spellcheck="false" />
           <input data-action="new-scope" class="rule-input rule-scope" placeholder="限定範圍（可留空）" spellcheck="false" />
           <button type="button" class="primary" data-action="rule-add">新增規則</button>
@@ -426,6 +478,31 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
           await loadRules(site.id);
           await loadResources(site.id);
         }
+        onChanged();
+      });
+    });
+
+    /** 換了型別就重畫那一排（`css` 的 pattern 要用 textarea） */
+    delegate(container, '[data-action="new-kind"]', 'change', (event, select) => {
+      const site = siteOf(select);
+      if (!site) return;
+
+      state.newKind.set(site.id, select.value);
+      onChanged();
+    });
+
+    /**
+     * 既有規則的型別也一樣要重畫：`hide` ↔ `css` 的 pattern 欄位形狀不同，
+     * 而 `css` ↔ `text-*` 還要把 replacement / scope 解除停用。
+     */
+    delegate(container, '[data-action="rule-kind"]', 'change', (event, select) => {
+      const site = siteOf(select);
+      const ruleId = ruleIdOf(select);
+      if (!site || !ruleId) return;
+
+      withBanner(async () => {
+        await api.updateSiteRule(site.id, ruleId, { kind: select.value });
+        await loadRules(site.id);
         onChanged();
       });
     });

@@ -8,11 +8,17 @@
  */
 
 const { safeCssSelector } = require('./selector.js');
+const { safeCssText } = require('./css-text.js');
 const { parseScope } = require('./scope.js');
 const { compileUserRegex } = require('./user-regex.js');
 const { literalToRegex } = require('./literal.js');
 
-const RULE_KINDS = Object.freeze(['hide', 'text-replace', 'text-rewrite']);
+/**
+ * `hide` 其實是 `css` 的特例（它產生的就是
+ * `選擇器 { display: none !important }`），但兩個都留著：`hide` 只要一個選擇器、
+ * 不用懂 CSS，而且控制台數得出它命中幾個元素 —— 一段 CSS 沒有「命中數」。
+ */
+const RULE_KINDS = Object.freeze(['hide', 'css', 'text-replace', 'text-rewrite']);
 const TEXT_KINDS = Object.freeze(['text-replace', 'text-rewrite']);
 const MAX_REPLACEMENT_LENGTH = 500;
 
@@ -33,6 +39,7 @@ function base(row) {
     matcher: null,
     scopeParsed: null,
     selector: null,
+    css: null,
     error: null,
   };
 }
@@ -40,6 +47,12 @@ function base(row) {
 function compileHide(row) {
   const selector = safeCssSelector(row.pattern);
   return selector.ok ? { ...base(row), selector: selector.value } : failed(row, selector.error);
+}
+
+/** `css`：pattern 存的是 **CSS 文字**，不是選擇器（規格 §9） */
+function compileCss(row) {
+  const css = safeCssText(row.pattern);
+  return css.ok ? { ...base(row), css: css.value } : failed(row, css.error);
 }
 
 function compileText(row) {
@@ -72,7 +85,9 @@ function compileRule(row) {
     return failed(row, `kind 只能是 ${RULE_KINDS.join(' / ')}`);
   }
 
-  return row.kind === 'hide' ? compileHide(row) : compileText(row);
+  if (row.kind === 'hide') return compileHide(row);
+  if (row.kind === 'css') return compileCss(row);
+  return compileText(row);
 }
 
 /** 照 order_index 排好（同序時用 id，才有穩定的順序） */
@@ -97,11 +112,25 @@ function activeHideRules(compiled) {
   return compiled.filter((rule) => rule.enabled && !rule.error && rule.kind === 'hide');
 }
 
+/** 真的會被注入的那些 CSS 片段 */
+function activeCssRules(compiled) {
+  return compiled.filter((rule) => rule.enabled && !rule.error && rule.kind === 'css' && rule.css);
+}
+
+/** 兩種都會變成注入的 CSS。`order_index` 決定順序 ＝ 決定誰覆蓋誰（後者勝）。 */
+function activeStyleRules(compiled) {
+  return compiled.filter(
+    (rule) => rule.enabled && !rule.error && (rule.kind === 'hide' || (rule.kind === 'css' && rule.css)),
+  );
+}
+
 module.exports = {
   compileRule,
   compileRules,
   activeTextRules,
   activeHideRules,
+  activeCssRules,
+  activeStyleRules,
   RULE_KINDS,
   TEXT_KINDS,
   MAX_REPLACEMENT_LENGTH,
