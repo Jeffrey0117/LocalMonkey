@@ -158,8 +158,14 @@ function createRulesApiRouter({ store, siteRules, config, logger, fetchImpl, tra
 
       // 文字規則套在**翻譯後**的文字上，所以試跑也要先翻一遍，不然看到的
       // 命中數跟實際頁面不一樣（規格 §1 的執行順序）
+      // ⛔ `encoding: 'utf8'`：這裡拿到的是真文字，不是代理的 latin1 管線字串。
+      // 用錯不會報錯，只會把譯文寫成亂碼 → 每條規則都變成「0 命中」。
       const translated = translation
-        ? translation.translateHtml(page.html, { site, contentType: page.contentType })
+        ? translation.translateHtml(page.html, {
+            site,
+            contentType: page.contentType,
+            encoding: 'utf8',
+          })
         : page.html;
 
       res.json({

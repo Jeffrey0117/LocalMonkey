@@ -168,8 +168,20 @@ function createAdminApiRouter({ store, config, logger, fetchImpl, translation, c
     });
   });
 
+  /**
+   * 清單要帶上每個站有幾條改造規則（v5）。
+   *
+   * 從清單直接看得到才有用 —— 要展開才知道有沒有規則的話，使用者得一個一個
+   * 點開才能回答「我到底改過哪幾個站」。一次 GROUP BY，不是 N+1。
+   */
   router.get('/sites', (req, res) => {
-    res.json({ sites: store.sites.listWithScripts() });
+    const counts = store.siteRules.counts();
+
+    res.json({
+      sites: store.sites
+        .listWithScripts()
+        .map((site) => ({ ...site, rule_count: counts[site.id] ?? 0 })),
+    });
   });
 
   router.post('/sites', async (req, res) => {

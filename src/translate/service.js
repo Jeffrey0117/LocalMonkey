@@ -82,11 +82,25 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
    * 「這一頁 85 段裡命中了 12 段」是伺服器端才看得到的事實，而使用者看到的
    * 症狀是「這邊怎麼沒翻譯到」。回報用的出口，不影響回傳值。
    *
-   * @param {string} html latin1 管線字串（代理的 HTML 改寫全程在 latin1 上）
-   * @param {{ site: object, contentType: string|null, onStats?: (stats: object) => void }} input
-   * @returns {string} 回填後的 latin1 字串
+   * ⛔ `encoding` 不是裝飾品。代理走的是 **latin1 管線**（每個字元是一個 byte），
+   * 所以要在邊界上解碼再編回去；但控制台的「試一下」拿到的是**真文字**
+   * （`fetchUpstreamPage` 已經 `toString('utf8')` 過了）。用錯的話不會報錯，
+   * 只會安靜地把中文譯文寫成亂碼 —— 實測症狀是「試跑結果每條規則都 0 命中」，
+   * 而同一組規則在真的頁面上明明是好的。
+   *
+   * @param {string} html latin1 管線字串，或真文字（看 `encoding`）
+   * @param {{
+   *   site: object,
+   *   contentType: string|null,
+   *   onStats?: (stats: object) => void,
+   *   encoding?: 'latin1'|'utf8',
+   * }} input
+   * @returns {string} 回填後的字串（跟輸入同一種編碼）
    */
-  function translateHtml(html, { site, contentType, onStats }) {
+  function translateHtml(html, { site, contentType, onStats, encoding = 'latin1' }) {
+    const decode = encoding === 'utf8' ? (text) => text : fromLatin1;
+    const encode = encoding === 'utf8' ? (text) => text : toLatin1;
+
     const active = settingsFor(site, config);
     if (!active.enabled) return html;
 
@@ -97,7 +111,7 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
     }
 
     try {
-      const items = collectSegments(html, { glossary: active.glossary, decode: fromLatin1 });
+      const items = collectSegments(html, { glossary: active.glossary, decode });
       if (items.length === 0) return html;
 
       const texts = uniqueTexts(items);
@@ -118,7 +132,7 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
         queue.kick();
       }
 
-      const rendered = renderTranslated(html, items, resolve, { encode: toLatin1 });
+      const rendered = renderTranslated(html, items, resolve, { encode });
 
       onStats?.({
         total: items.length,

@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const { startApp, adminHeaders, adminJson } = require('../support/app.js');
 const { startUpstream, TINY_PNG } = require('../support/upstream.js');
+const { translationHash } = require('../../src/translate/cache.js');
 
 /** SPEC-rules §4：控制台的規則 API；§3.6：資源覆寫 */
 
@@ -66,6 +67,17 @@ test('新增 → 列出 → 更新 → 刪除', async (t) => {
   });
   assert.equal(removed.status, 204);
   assert.equal((await api('/admin/api/sites/demo/rules')).body.rules.length, 0);
+});
+
+test('網站清單直接看得到每個站有幾條規則（不用展開）', async (t) => {
+  const { app, api } = await scenario(t);
+
+  assert.equal((await api('/admin/api/sites')).body.sites[0].rule_count, 0);
+
+  app.store.siteRules.create('demo', { kind: 'hide', pattern: '.a' });
+  app.store.siteRules.create('demo', { kind: 'hide', pattern: '.b' });
+
+  assert.equal((await api('/admin/api/sites')).body.sites[0].rule_count, 2);
 });
 
 test('⛔ 編譯不過的規則存得起來，而且清單會帶著原因（規格 §4：標紅）', async (t) => {
@@ -166,6 +178,39 @@ test('「試一下」回報每條文字規則命中幾段（規格 §4）', asyn
   assert.ok(byId.get(text.id).matched >= 2, '<title> 與 alt 都該命中');
   assert.equal(byId.get(hidden.id).matched, null, 'hide 的命中數由瀏覽器算');
   assert.match(result.body.css, /\.tm-menu/);
+});
+
+/**
+ * ⛔ 「試一下」會先把頁面翻一遍（文字規則套在譯文上），而它拿到的是**真文字**
+ * —— 不是代理走的 latin1 管線字串。用錯編碼不會報錯，只會把中文譯文寫成亂碼，
+ * 於是每條中文規則都顯示「0 命中」，而同一組規則在真的頁面上明明是好的。
+ * 這是開真瀏覽器按下「試一下」才發現的。
+ */
+test('⛔「試一下」要看得到翻譯後的文字（編碼用錯會每條都 0 命中）', async (t) => {
+  const { app, api } = await scenario(t);
+
+  app.store.sites.update('demo', { translate_enabled: 1, translate_lang: 'zh-TW' });
+  app.store.translations.put({
+    hash: translationHash('Links', 'zh-TW', app.config.translate.model),
+    source_text: 'Links',
+    target_lang: 'zh-TW',
+    model: app.config.translate.model,
+    translated: '連結',
+    origin: 'machine',
+  });
+
+  const rule = app.store.siteRules.create('demo', {
+    kind: 'text-replace',
+    pattern: '連結',
+    replacement: '外部資源',
+  });
+
+  const result = await api('/admin/api/sites/demo/rules/dry-run', {
+    method: 'POST',
+    body: JSON.stringify({ path: '/' }),
+  });
+
+  assert.equal(result.body.rules.find((entry) => entry.id === rule.id).matched, 1);
 });
 
 test('「試一下」打到不是 HTML 的路徑 → 400 而不是靜默回 0', async (t) => {
