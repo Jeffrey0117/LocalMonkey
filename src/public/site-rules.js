@@ -23,6 +23,14 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
     ['text-rewrite', '改寫文字（正則）'],
   ];
 
+  /**
+   * ⛔ 換了圖之後要講這句：代理對**非 HTML** 的回應是照抄上游的快取指示的
+   * （那是效能的來源），所以瀏覽器可能早就把舊的那張收進快取了 —— templatemo
+   * 給的是 `max-age=86400`，整整一天。覆寫本身回 `no-store`，但那只對
+   * 「瀏覽器真的來問我們」的時候有用。這是伺服器端完全看不到的症狀。
+   */
+  const CACHE_HINT = '如果畫面上還是舊的那張，按 Ctrl+F5（瀏覽器可能還留著上游給的快取）。';
+
   const PLACEHOLDERS = {
     hide: { pattern: 'CSS 選擇器，例 .tm-menu', replacement: '（隱藏不需要替換字）' },
     'text-replace': { pattern: '要找的字，例 templatemo', replacement: '換成，例 templatee' },
@@ -479,7 +487,7 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       withBanner(async () => {
         await api.uploadResource(site.id, resource.path, file);
         await loadResources(site.id);
-        banner.show(`${resource.path} 已換成新的檔案。`, 'ok');
+        banner.show(`${resource.path} 已換成新的檔案。${CACHE_HINT}`, 'ok');
         onChanged();
       });
     });
@@ -493,7 +501,7 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       withBanner(async () => {
         await api.uploadResource(site.id, path, file);
         await loadResources(site.id);
-        banner.show(`${path} 已換成新的檔案。`, 'ok');
+        banner.show(`${path} 已換成新的檔案。${CACHE_HINT}`, 'ok');
         onChanged();
       });
     });

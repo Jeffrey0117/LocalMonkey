@@ -12,7 +12,8 @@
  * 讓人工處理，不要無限重試一直燒 CPU。
  */
 
-const { isBisectable, isInfrastructure } = require('./ollama.js');
+const { isBisectable, isInfrastructure, AlignmentError } = require('./ollama.js');
+const { findSimplified, wantsTraditional } = require('./simplified.js');
 
 const MAX_ATTEMPTS = 3;
 
@@ -78,6 +79,31 @@ function createTranslationQueue({
    *
    * @returns {{ translated: number, failed: Array<object>, fatal: Error|null }}
    */
+  /**
+   * ⛔ 「禁止簡體」不能只寫在 prompt 裡，要在**收貨**的時候驗。
+   *
+   * 實測（2026-11-18 對使用者真的快取跑一次重翻）：13 段重翻完還剩 8 段是
+   * 簡體 —— qwen2.5 就是會把 `Lantern River` 翻成「灯笼河」，prompt 裡寫了
+   * 也一樣。而翻譯快取是**永久**的，所以寫進去就等於永久錯下去。
+   *
+   * 當成 `alignment` 失敗（而不是另一種 kind）是刻意的：那一類的處置
+   * 「二分 → 找出是哪一段 → 單段也失敗才燒 attempts → 三次之後進翻不動清單」
+   * 正好就是這裡要的。模型答得出來就會過，答不出來就讓人工接手。
+   */
+  function assertNoSimplified(rows, translated) {
+    if (!wantsTraditional(rows[0]?.target_lang)) return;
+
+    const offenders = new Set(rows.flatMap((row, index) => findSimplified(translated[index])));
+    if (offenders.size === 0) return;
+
+    // ⛔ 訊息裡**不要**放原文：`recordFailure` 會把同一句錯誤寫給這一批裡
+    // 每一個失敗的段，點名其中一段等於對其他段說謊（地雷 36 的教訓 ——
+    // 錯的訊息會害人去查一個沒壞的東西）。原文在「翻不動」清單上本來就看得到。
+    throw new AlignmentError(`譯文裡有簡體字（${[...offenders].join('')}）`, {
+      reason: 'simplified',
+    });
+  }
+
   async function translateChunk(rows) {
     try {
       const translated = await client.translateBatch(
@@ -85,6 +111,7 @@ function createTranslationQueue({
         { targetLang: rows[0].target_lang, glossary: rows[0].glossary ?? [] },
       );
 
+      assertNoSimplified(rows, translated);
       remember(rows, translated);
       return { translated: rows.length, failed: [], fatal: null };
     } catch (error) {

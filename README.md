@@ -27,6 +27,10 @@ http://你的機器:30600/p/ptt/        ← 打開這個網址就是改造後的
 - **把整個網站翻成中文（v4）。** 用你本機的 ollama 在 HTML 出門前就翻好 ——
   不用 API key、不用錢、**內容不會送出去**，而且翻一次永久有效。
   [往下看](#把網站翻成中文v4)。
+- **不寫程式也能改掉網站（v5）。** 在控制台填幾條規則就好：把看不順眼的按鈕
+  **藏掉**、把某段文字**換掉**、把標題**重排**（`634 燈河` → `燈河[634]`），
+  甚至**把 logo 換成自己的圖**。規則是資料不是程式碼 —— 存檔就生效、不用重啟、
+  也不用為了藏一顆按鈕去寫一支 userscript。
 
 ```
 ┌─ LocalMonkey ─────────────── [腳本] [網站] ───────── + 丟腳本 ─┐
@@ -343,6 +347,34 @@ tests/
 | GET | `/admin/api/sites/:id` | 單一網站 |
 | PUT | `/admin/api/sites/:id` | 同 PATCH |
 | DELETE | `/admin/api/sites/:id` | 刪除（只掛在它身上的腳本會跟著走，還掛在別站的留著） |
+
+### 改造規則與資源覆寫（v5）
+
+| Method | Path | 說明 |
+|---|---|---|
+| GET | `/admin/api/sites/:id/rules` | 列出規則，每一條附 `error`（編譯不過的原因） |
+| POST | `/admin/api/sites/:id/rules` | 新增（`kind` / `pattern` / `replacement` / `scope` / `note`） |
+| PATCH | `/admin/api/sites/:id/rules/:ruleId` | 改一條（同 PUT） |
+| DELETE | `/admin/api/sites/:id/rules/:ruleId` | 刪一條 |
+| POST | `/admin/api/sites/:id/rules/reorder` | 整批重排（`{ ids }`） |
+| POST | `/admin/api/sites/:id/rules/dry-run` | 「試一下」：每條文字規則命中幾段 |
+| GET | `/admin/api/sites/:id/resources` | 列出資源覆寫 |
+| PUT | `/admin/api/sites/:id/resources?path=/images/x.png` | 上傳（body 是圖片本身） |
+| PATCH | `/admin/api/sites/:id/resources/:resourceId` | 啟用 / 停用 |
+| DELETE | `/admin/api/sites/:id/resources/:resourceId` | 刪掉（那條路徑回去走上游） |
+| GET | `/admin/api/sites/:id/resource-candidates?path=/` | 這一頁載過哪些圖 |
+| GET | `/admin/api/translate/simplified` | 快取裡哪幾段混到簡體字 |
+| POST | `/admin/api/translate/simplified/retranslate` | 一鍵重翻（預設跳過人工覆寫） |
+
+三種規則：`hide`（CSS 選擇器 → `display:none`）、`text-replace`（字面取代，
+大小寫風格跟著原文）、`text-rewrite`（正則 + `$1`…`$9`）。文字規則套在
+**翻譯之後**，而且只動文字段 —— `href` / `src` / `class` / `id` 永遠不會被碰到。
+
+一組規則也可以用腳本一次配好（冪等，可以重跑）：
+
+```bash
+node scripts/seed-site-rules.js templatemo-com --logo my-logo.png
+```
 
 ### v1 的相容路徑（仍然有效）
 

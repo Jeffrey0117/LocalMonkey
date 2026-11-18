@@ -62,9 +62,25 @@ function containsSimplified(text) {
   return false;
 }
 
+/** 繁體的目標語言（zh-TW / zh-HK / zh-Hant…）。其他語言不該被這套規則管。 */
+const TRADITIONAL_LANGS = /^zh-(tw|hk|mo|hant)(-|$)/i;
+
+/**
+ * 這個目標語言要不要擋簡體？
+ *
+ * ⛔ 一定要問這一題：使用者把 `translate_lang` 設成 `zh-CN` 的時候，
+ * 簡體字**才是對的答案**。把「禁止簡體」寫死在佇列裡等於把那個設定弄壞。
+ *
+ * @param {unknown} targetLang
+ */
+function wantsTraditional(targetLang) {
+  return typeof targetLang === 'string' && TRADITIONAL_LANGS.test(targetLang);
+}
+
 module.exports = {
   containsSimplified,
   findSimplified,
+  wantsTraditional,
   SIMPLIFIED_CHARS,
   NOT_SIMPLIFIED,
   EXTRA_SIMPLIFIED,

@@ -7,6 +7,7 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 - [`docs/SPEC-console.md`](docs/SPEC-console.md) —— **v2：油猴腳本控制台**（解析、多對多、GM API）
 - [`docs/SPEC-dashboard.md`](docs/SPEC-dashboard.md) —— **v3：`<base>` 修正 + 儀表板**
 - [`docs/SPEC-translate.md`](docs/SPEC-translate.md) —— **v4：伺服器端翻譯層**（切段、ollama、快取、爬蟲）
+- [`docs/SPEC-rules.md`](docs/SPEC-rules.md) —— **v5：站台改造規則**（隱藏、改寫文字、資源覆寫）
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -40,7 +41,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1037 個測試
+npm test             # node:test，1217 個測試
 npm run test:coverage
 ```
 
@@ -105,7 +106,9 @@ HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是�
 1. 網址改寫   rewriteDocumentUrls()
 2. 翻譯回填   translate/service.js  ← 要在 1 之後：切段器算的是字元座標，
                                        之後的任何字串改動都會讓座標失效
-3. 腳本注入   injectScripts()       ← 只在頭尾加 tag，不影響前兩步
+3. 改造規則   rules/service.js      ← 文字規則套在**翻譯後**的文字上（v5），
+                                       hide 的 CSS 插在 </head> 之前
+4. 腳本注入   injectScripts()       ← 只在頭尾加 tag，不影響前三步
 ```
 
 每一層都是獨立的純函式模組（`src/lib/*`），單元測試打的是它們；
@@ -207,6 +210,37 @@ crawl.js        預先翻譯整站
 service.js      門面：代理叫的就是這支
 ```
 
+### 改造一頁怎麼走（v5）
+
+```
+proxy/respond.js → rules/service.js applyToHtml()   ← 同步，跟翻譯層同一套紀律
+  → compile.js    DB 的列 → 可執行的規則（壞規則帶著 error 回去，不丟例外）
+  → apply.js      segmentHtml(ancestors) → splitEdges → decodeEntities
+                  → text.js 依序套規則 → encodeEntities → 座標回填
+  → hide-css.js   選擇器 → `display: none !important`
+  → style-tag.js  插在 </head> 之前（零閃爍，又贏得過站內的 !important）
+```
+
+資源覆寫（換 logo / 換圖）**不在這條管線上** —— 它在 `proxy/handler.js` 的
+最前面（`proxy/resource-override.js`）：命中就直接回使用者上傳的檔案，
+SSRF、讀 body、forward 全部省掉。
+
+```
+src/rules/
+  selector.js     hide 的 CSS 選擇器檢查 + 非 ASCII 跳脫
+  scope.js        文字規則的範圍限定（祖先鏈比對，CSS 選擇器的子集）
+  user-regex.js   使用者正則的編譯 + 嵌套量詞攔截
+  literal.js      字面取代（空白寬鬆、大小寫風格跟著原文）
+  compile.js      DB 的列 → 可執行的規則 / 一條錯誤訊息
+  text.js         單段套規則 + 跨段的時間預算
+  apply.js        整份 HTML 的座標回填
+  hide-css.js     hide → CSS
+  style-tag.js    注入 <style>
+  image-refs.js   候選圖（img src / srcset / CSS url()）
+  service.js      門面：代理與控制台叫的都是這支
+  presets/        使用者實際要求的那幾組規則（**資料**，不是引擎）
+```
+
 ### 後台前端（v3 之後是兩層）
 
 ```
@@ -270,6 +304,24 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
   套了的話 UI 分不出「使用者選了這個」與「跟著全域走」。
 - `glossary` 存 JSON 陣列（跟 `script_sites.exclude_glob` 同一個做法），
   讀寫一律走 `translate/glossary.js` 的 `parseGlossary` / `serializeGlossary`。
+
+## 資料模型（v5 新增）
+
+```
+site_rules          id / site_id / kind('hide'|'text-replace'|'text-rewrite')
+                    pattern / replacement / scope / note / enabled / order_index
+resource_overrides  id / site_id / path / sha256 → assets / content_type / enabled
+                    UNIQUE(site_id, path)
+```
+
+- **`scope` 不在規格 §2 的欄位表裡** —— 它是 §3.2 追加的：卡片標題那條規則
+  全站套會把「2026 年的…」一起改掉。空的 scope ＝ 全站。
+- **`resource_overrides.sha256` 是指向 `assets` 的外鍵。** 覆寫指到不存在的
+  檔案的話，使用者看到的是「換了圖但圖破了」，而那時候已經來不及知道原因。
+- **`replacement` 的空字串有意義**（把一段文字刪掉，footer 的孤兒分隔符就靠它），
+  所以 DB 層不把它折成 null。
+- 規則**每個請求重讀 + 重編譯**：改了立刻生效，而且 `RegExp` 的 `lastIndex`
+  不會跨請求活著。
 
 ---
 
@@ -501,6 +553,41 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
     有 1 段是簡繁混雜（「發現超过620个免费的…」），而中招的剛好是首頁最大那塊文案。
     加一條規則之後，同一段實測 3/3 全繁體。
 
+### v5（改造規則）踩到的
+
+43. **⛔ 講死了也沒用：「禁止簡體」要在收貨的時候驗，不能只寫在 prompt 裡。**
+    實測（2026-11-18 對使用者真的快取跑一次重翻）：13 段重翻完**還剩 8 段是簡體**
+    —— qwen2.5 就是會把 `Lantern River` 翻成「灯笼河」，prompt 裡寫了也一樣。
+    而翻譯快取是**永久**的，寫進去就等於永久錯下去。
+    現在 `queue.js` 收到譯文會先過 `findSimplified()`，有簡體就當成 `alignment`
+    失敗（二分 → 單段 → attempts += 1 → 三次後進「翻不動」清單讓人工處理）。
+    ⛔ 這個檢查**只在目標語言是繁體時**生效（`wantsTraditional`）——
+    使用者把 `translate_lang` 設成 `zh-CN` 時，簡體字才是對的答案。
+44. **⛔ 簡體偵測的字表不要用手寫的。** 手寫的第一版漏了「灯」「笼」「动」，
+    於是「掃出 0 段」變成一個**假答案** —— 比沒做還糟。
+    `src/translate/simplified-chars.js` 是 `scripts/generate-simplified-chars.ps1`
+    拿 Windows 自己的簡繁轉換表（`Microsoft.VisualBasic.Strings.StrConv`）掃出來的
+    8873 個碼位，再用兩份小清單修邊：排除 `台`（台灣 / 控制台 / 平台 在繁體裡天天用，
+    不排除幾乎每個站都誤判）、補上 `么`（什么 / 怎么 —— 兩邊都是合法字，轉換表動不了）。
+45. **⛔ 規則的 scope 只配了清單頁的容器 → 詳情頁完全沒變，而且測試全綠。**
+    templatemo 的卡片在清單頁是 `.thumbnail_270`，在詳情頁底下那排「More Website
+    Templates」卻是 `.tm_silver_360`。curl 與單元測試都不會發現 —— 它們不會
+    「順手往下滑一頁」。**規則配完一定要把每一種頁面都開過一遍**。
+    （現在 `tests/integration/rules-templatemo.test.js` 有一條釘著詳情頁。）
+46. **⛔ 加了資源覆寫，瀏覽器裡還是舊的那張圖 —— 而伺服器端一切正常。**
+    代理對**非 HTML** 的回應是照抄上游快取指示的（那是效能的來源），所以
+    templatemo 的 `max-age=86400` 會讓瀏覽器整整一天不來問我們。覆寫本身回
+    `no-store`，但那只對「瀏覽器真的來問」的時候有用。
+    實測現場：`fetch(url, {cache:'no-store'})` 拿到 1278 bytes 的新圖，
+    同一頁的 `<img>` 卻是 9982 bytes 的舊圖。
+    **這是地雷 33 的變體，差別在於它連 `curl` 都看起來是對的。**
+    控制台上傳完會提示按 Ctrl+F5；沒有辦法從伺服器端回頭清掉瀏覽器已經存下的那份。
+47. **`hide` 規則的命中數不要在伺服器端算。** 那需要真的 CSS 比對，而伺服器端
+    沒有 DOM（切段器是狀態機）。控制台的「試一下」是抓一份**代理過的同源頁面**
+    丟 `DOMParser` + `querySelectorAll` —— 瀏覽器自己就有完整的 CSS 引擎。
+    `scope` 的比對是另一回事：那是祖先鏈上的子集比對，看不懂的語法一律拒絕
+    （猜錯的後果是「規則悄悄套到全站」，比沒生效嚴重得多）。
+
 ---
 
 ## 改動時的注意事項
@@ -571,6 +658,24 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
   `translate/cache.js` 留著當對外介面（hash + resolve），責任跟規格寫的一致。
 - **爬蟲的禮貌間隔只准往上調。** `LOCALMONKEY_CRAWL_POLITENESS_MS` 的下限就是預設值
   500ms —— 這是在打**別人的**伺服器，往下調就是把功能變成壓測工具。
+- **文字規則只套在宣告 UTF-8 的文件上，`hide` 不受這個限制。** 理由跟翻譯層
+  一模一樣（`translate/charset.js`）：使用者寫的替換字幾乎都含中文，插進一份
+  宣告 Big5 的頁面就是亂碼。`hide` 的選擇器已經被跳脫成純 ASCII，所以不受影響。
+  控制台的「試一下」會把 `charset_ok: false` 講出來 —— 不然「寫了沒反應」
+  這個症狀完全猜不到原因。
+- **文字規則只動切段器切出來的文字段。** `href` / `src` / `class` / `id` /
+  `data-*` 從來不在切段結果裡，所以結構上不可能被改到（`tests/unit/rules-apply.test.js`
+  與 templatemo 的整組規則各有一條回歸測試釘著）。
+- **使用者的正則有三層保護，缺一不可**（`rules/user-regex.js`）：編譯時擋掉
+  嵌套量詞（`(a+)+`、`(a|aa)+` 這種指數級回溯的形狀）、不把超過 2000 字的段
+  餵進去、跨段累計時間預算超了就停用那條規則。JS 的正則比對是**同步而且不可
+  中斷**的，所以沒有第四種辦法 —— 真的跑進去了就只能等它跑完。
+- **壞規則不丟例外，帶著 `error` 回去。** 控制台要把那一列標紅並說明原因，
+  而代理要照常回應 —— 一條規則寫壞不該讓整個網站打不開。所以 API 也**收**
+  編譯不過的規則（退回去的話使用者只會看到一個 400，沒有上下文可以改）。
+- **資源覆寫上傳的 content-type 以「聞出來的」為準**（magic bytes），不是宣告的
+  —— 宣告是使用者可控的字串。**SVG 一律拒絕**：它可以內嵌 `<script>`，而那張圖
+  是從我們自己的 origin 送出去的（同 `safeAssetContentType` 與 favicon 的理由）。
 - **翻完才改 `<html lang>`。** 一份還是英文的頁面不該宣告自己是中文。
   （為什麼要改：`lang` 決定瀏覽器挑哪套 CJK 字體，`lang="en"` 的中文頁面常常被畫成
   日文字形。這是驗收時在真瀏覽器上看到的，規格沒提。）
