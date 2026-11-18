@@ -7,22 +7,28 @@
  * 可拋棄的），而是商城機制的一部分 —— 存在 per-site 設定裡，之後換資料來源
  * 也照樣有效。
  *
- * ⛔ **不接金流。** 購物車與會員狀態只在 `localStorage`（規格 §4.3 明說是
- * 純前端示範）。這個檔案裡沒有任何金額會被拿去扣款，`price` 只是印在畫面上
- * 的數字 —— 真要接金流的時候，單一真相來源要搬到伺服器端（規則見
- * `~/.claude/rules/infra-map.md` 的變現三件套：`price` 是後端算的，
- * 前端改不了金額）。
+ * ⛔ **這裡的 `price` 不是會被扣款的金額。** 它是印在畫面上的數字。
+ * 接了金流（SPEC-reskin-v2 §8）之後，真正要扣的錢在 **PayGate 的方案**裡
+ * （`reskin/paygate.js` 只送 `plan_id`，金額由 PayGate 那邊決定）——
+ * 前端改不了金額，這裡改了也改不了（規則見 `~/.claude/rules/infra-map.md`
+ * 的變現三件套：`price` 是後端算的）。兩邊的數字要一致是**設定的責任**，
+ * 不是程式可以替使用者保證的事。
  */
 
 const DEFAULT_CURRENCY = 'NT$';
 
 /**
- * 規格 §4.3 的那三檔。`id` 是前端 localStorage 的 key，所以限定英數。
+ * 預設**只有一檔**（SPEC-reskin-v2 §3）。
+ *
+ * ⛔ 使用者的話是「別分什麼個人企業，也別寫什麼授權的鬼」——
+ * 所以商品頁就是一個價格、直接買，而且整個版型裡沒有「授權」這兩個字。
+ * 資料結構留著吃得下多檔（之後可能真的要分級，`compilePricing` 的上限是
+ * `MAX_PLANS`），但**預設不准長出第二檔** —— 版型看到只有一檔就不畫選擇區。
+ *
+ * `id` 是前端 localStorage 的 key，所以限定英數。
  */
 const DEFAULT_PLANS = Object.freeze([
-  Object.freeze({ id: 'free', name: '免費版', price: 0, note: '預覽 + 下載' }),
-  Object.freeze({ id: 'personal', name: '個人授權', price: 199, note: '可用於商業用途' }),
-  Object.freeze({ id: 'enterprise', name: '企業授權', price: 699, note: '多人使用、可轉授權' }),
+  Object.freeze({ id: 'standard', name: '單檔購買', price: 199, note: '' }),
 ]);
 
 const MAX_PLANS = 8;

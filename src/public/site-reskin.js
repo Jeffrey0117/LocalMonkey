@@ -71,6 +71,26 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
       .join('');
   }
 
+  /**
+   * 金流（SPEC-reskin-v2 §8）。
+   *
+   * ⛔ 這一格的存在理由是「**半套設定**」：env 少設一個的時候，站是 200、
+   * 畫面一切正常，而「立即購買」悄悄退回示範模式 —— 從外面看不出差別。
+   * 所以缺哪幾個環境變數要直接列出來，而不是只說「沒接」。
+   */
+  function paymentBadge(status) {
+    const payments = status.payments ?? { live: false, missing: [] };
+    if (payments.live) return '<span class="badge is-ok">金流：測試環境已接上</span>';
+
+    const missing = payments.missing ?? [];
+    const hint =
+      missing.length > 0 && missing.length < 4 ? `（缺 ${missing.join('、')}）` : '';
+
+    return `<span class="badge" title="${escapeHtml(
+      missing.join(' '),
+    )}">金流：示範模式${escapeHtml(hint)}</span>`;
+  }
+
   function pricingRows(status) {
     return (status.pricing?.plans ?? [])
       .map(
@@ -150,6 +170,8 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
             <select data-action="reskin-theme">${themeOptions(status)}</select>
           </label>
 
+          ${paymentBadge(status)}
+
           <span class="badge ${status.entries > 0 ? 'is-ok' : ''}">${escapeHtml(status.entries)} 筆設定</span>
           <span class="badge">${escapeHtml(status.cached)} 筆快取</span>
           <button type="button" class="ghost" data-action="reskin-clear-cache">清掉快取</button>
@@ -192,7 +214,10 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
           </div>
 
           <div>
-            <label class="reskin-label">價格方案（上游沒有價格，這是我們自己定的；不接金流）</label>
+            <label class="reskin-label">
+              價格方案（上游沒有價格，這是我們自己定的。接了金流的時候，真正被扣的錢
+              在 PayGate 的方案裡 —— 這裡的數字只是印在畫面上）
+            </label>
             <table class="reskin-pricing">
               <thead><tr><th>id</th><th>名稱</th><th>價格</th><th>說明</th></tr></thead>
               <tbody data-reskin-plans>${pricingRows(status)}</tbody>

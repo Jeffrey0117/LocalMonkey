@@ -23,7 +23,7 @@
 
 const { compileConfig, findEntry } = require('./config.js');
 const { compilePricing } = require('./pricing.js');
-const { extractData } = require('./extract.js');
+const { extractData, DATA_MODEL_VERSION } = require('./extract.js');
 const { themeFor, DEFAULT_THEME } = require('./themes/index.js');
 const { sha256 } = require('../db/reskin.js');
 const { isUtf8Document } = require('../translate/charset.js');
@@ -44,9 +44,15 @@ function homeFor(siteId) {
 }
 
 /**
- * @param {{ store: object, logger: object }} context
+ * @param {{
+ *   store: object,
+ *   logger: object,
+ *   payments?: { live: boolean, missing?: Array<string> },
+ * }} context
+ *   `payments` 是「這台機器有沒有接金流」（SPEC-reskin-v2 §8）。
+ *   預設沒接 ＝ 示範模式，版型會據此改文案與結帳面板。
  */
-function createReskinService({ store, logger }) {
+function createReskinService({ store, logger, payments = { live: false, missing: [] } }) {
   /**
    * 每個請求重新讀 + 重新編譯（同規則層）。看起來浪費，但是刻意的：
    * 設定通常兩三筆，一次 index 命中的 SELECT 加幾個正則編譯是微秒級；
@@ -62,6 +68,22 @@ function createReskinService({ store, logger }) {
   }
 
   /**
+   * 版型拿得到的東西。
+   *
+   * ⛔ **只有這裡決定版型看得到什麼。** 版型層不碰 DB、不認識上游，所以
+   * 「回首頁的路徑」「價格方案」「金流接了沒」都得由這支餵進去。
+   * 金流**只給一個布林值** —— PayGate 的網址與金鑰不准進頁面。
+   */
+  function renderContextFor(site, pricing) {
+    return {
+      siteId: site.id,
+      home: homeFor(site.id),
+      pricing: pricing.ok ? pricing.value : compilePricing(null).value,
+      payments: { live: payments.live === true },
+    };
+  }
+
+  /**
    * 抽資料（走快取）。
    *
    * ⛔ **抽取失敗不寫快取。** 寫了的話使用者改好設定還得先想辦法把那筆失敗的
@@ -69,7 +91,14 @@ function createReskinService({ store, logger }) {
    */
   function dataFor(site, { entry, html, pathname }) {
     const htmlSha256 = sha256(html);
-    const key = store.reskinCache.key({ siteId: site.id, path: pathname, htmlSha256 });
+    const key = store.reskinCache.key({
+      siteId: site.id,
+      path: pathname,
+      htmlSha256,
+      // ⛔ 資料模型的版本也要進 key，不然改完抽取層會拿到舊形狀的資料
+      // 而 log 顯示 cache=hit（db/reskin.js 有完整理由）
+      version: DATA_MODEL_VERSION,
+    });
 
     const cached = store.reskinCache.get(key);
     if (cached) return { ok: true, data: cached.data, cached: true };
@@ -159,11 +188,7 @@ function createReskinService({ store, logger }) {
         return null;
       }
 
-      const rendered = theme.render(extracted.data, {
-        siteName: site.name ?? site.id,
-        home: homeFor(site.id),
-        pricing: pricing.ok ? pricing.value : compilePricing(null).value,
-      });
+      const rendered = theme.render(extracted.data, renderContextFor(site, pricing));
 
       report({
         mode: 'reskin',
@@ -181,6 +206,49 @@ function createReskinService({ store, logger }) {
       report({ mode: 'proxy', reason: 'error', error: error.message });
       return null;
     }
+  }
+
+  /**
+   * 無限載入的下一頁（SPEC-reskin-v2 §7）。
+   *
+   * ⛔ 吃的是**真文字**（呼叫端自己抓了一份上游頁面），回的是**卡片的 HTML
+   * 片段**而不是純資料 —— 卡片的 markup 只能有一份。端點回 JSON 讓前端自己
+   * 畫的話，同一張卡會有伺服器端與瀏覽器端兩個版本，而這個專案已經踩過
+   * 「同一個值兩邊各算一次 → 畫面自己跳」（地雷 62）。
+   * 所以 JSON 的欄位是「這一批的 HTML + 分頁資訊」。
+   *
+   * ⛔ 走的是**同一份快取**（`dataFor`）：使用者滑一次首頁就抓過第 2 頁，
+   * 重新整理再滑的時候上游沒變就不用再抽一次。
+   *
+   * `listing` 以外的 kind 一律拒絕：第 2 頁不可能是一個商品頁，
+   * 而「命中了但不是列表」是設定寫錯，前端要看到「沒有更多」而不是一直轉。
+   */
+  function nextPage(html, { site, pathname, contentType }) {
+    if (site.reskin_enabled !== true) return { ok: false, reason: 'disabled' };
+    if (!isUtf8Document(html, contentType)) return { ok: false, reason: 'charset' };
+
+    const { config, pricing, theme } = settingsFor(site);
+    if (!config.ok) return { ok: false, reason: 'bad-config', error: config.error };
+    if (config.value.length === 0) return { ok: false, reason: 'no-config' };
+
+    const entry = findEntry(config.value, pathname);
+    if (entry === null) return { ok: false, reason: 'no-match' };
+    if (entry.kind !== 'listing') return { ok: false, reason: 'not-listing' };
+
+    const extracted = dataFor(site, { entry, html, pathname });
+    if (!extracted.ok) return { ok: false, reason: 'extract-failed', error: extracted.reason };
+
+    const { data } = extracted;
+
+    return {
+      ok: true,
+      html: theme.renderNextPage(data, renderContextFor(site, pricing)),
+      items: data.items.length,
+      page: data.page,
+      totalPages: data.totalPages,
+      nextPath: data.nextPath ?? null,
+      cached: extracted.cached,
+    };
   }
 
   /**
@@ -239,7 +307,7 @@ function createReskinService({ store, logger }) {
       ok: true,
       matched: index,
       kind: data.kind,
-      theme: (site.reskin_theme ?? DEFAULT_THEME),
+      theme: themeFor(site.reskin_theme ?? DEFAULT_THEME).ID,
       // 列表頁回前三項就夠看出對不對了，全部回去會讓控制台的面板爆長
       items: data.kind === 'listing' ? data.items.length : 1,
       sample: data.kind === 'listing' ? data.items.slice(0, 3) : data,
@@ -255,16 +323,24 @@ function createReskinService({ store, logger }) {
 
     return {
       enabled: site.reskin_enabled === true,
-      theme: site.reskin_theme ?? DEFAULT_THEME,
+      /**
+       * ⛔ 回「**實際會用到的**版型」而不是 DB 裡的字串。存在 DB 裡的值會比
+       * 程式碼舊（版型改過名字），而 `themeFor` 本來就會把舊名字轉過去 ——
+       * 這裡照抄 DB 的話，控制台的下拉選單會選不到任何一個選項，
+       * 而畫面上明明已經是新版型了。
+       */
+      theme: themeFor(site.reskin_theme ?? DEFAULT_THEME).ID,
       entries: config.ok ? config.value.length : 0,
       config_error: config.ok ? null : config.error,
       pricing_error: pricing.ok ? null : pricing.error,
       pricing: pricing.ok ? pricing.value : compilePricing(null).value,
       cached: store.reskinCache.count(site.id),
+      // 控制台要講得出「金流接了沒、缺哪個 env」（SPEC-reskin-v2 §8）
+      payments: { live: payments.live === true, missing: payments.missing ?? [] },
     };
   }
 
-  return { reskinHtml, dryRun, statusFor, settingsFor };
+  return { reskinHtml, nextPage, dryRun, statusFor, settingsFor };
 }
 
 module.exports = { createReskinService, pathnameOf, homeFor, MAX_HTML_BYTES };

@@ -49,11 +49,17 @@ const LISTING = Object.freeze({
     // 兩個地方，所以 `.paging a` 會把六個標籤連結一起收進分頁列
     // （實測症狀：分頁變成「1 2345678下一步 模板標籤 單頁 攝影…」）。
     // 分得出來的只有 href，而 `[href*=…]` 是選擇器文法明確拒絕的。
+    //
+    // ⛔ 選擇器是 `a` 而不是 `.paging a`：**首頁沒有頁碼列**（實測
+    // 2026-11-19：它是精選 12 件，完整清單從 `/page/1` 開始，而首頁上只有
+    // 一個連過去的連結）。釘在 `.paging` 裡的話，使用者最常開的那一頁
+    // 剛好就是唯一不會自動載入的那一頁（SPEC-reskin-v2 §7）。
+    // `when` 已經把「什麼算頁碼連結」講清楚了，容器不重要。
     pages: {
-      sel: '.paging a',
+      sel: 'a',
       as: 'link',
       many: true,
-      when: { attr: 'href', match: 'page/\\d+' },
+      when: { attr: 'href', match: '/page/\\d+' },
     },
     categories: { sel: 'a', as: 'link', many: true, when: { attr: 'href', match: '^/tag/' } },
   },
@@ -108,11 +114,17 @@ const TAG_LISTING = Object.freeze({
     // 兩個地方，所以 `.paging a` 會把六個標籤連結一起收進分頁列
     // （實測症狀：分頁變成「1 2345678下一步 模板標籤 單頁 攝影…」）。
     // 分得出來的只有 href，而 `[href*=…]` 是選擇器文法明確拒絕的。
+    //
+    // ⛔ 選擇器是 `a` 而不是 `.paging a`：**首頁沒有頁碼列**（實測
+    // 2026-11-19：它是精選 12 件，完整清單從 `/page/1` 開始，而首頁上只有
+    // 一個連過去的連結）。釘在 `.paging` 裡的話，使用者最常開的那一頁
+    // 剛好就是唯一不會自動載入的那一頁（SPEC-reskin-v2 §7）。
+    // `when` 已經把「什麼算頁碼連結」講清楚了，容器不重要。
     pages: {
-      sel: '.paging a',
+      sel: 'a',
       as: 'link',
       many: true,
-      when: { attr: 'href', match: 'page/\\d+' },
+      when: { attr: 'href', match: '/page/\\d+' },
     },
     categories: { sel: 'a', as: 'link', many: true, when: { attr: 'href', match: '^/tag/' } },
   },

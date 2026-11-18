@@ -157,6 +157,23 @@ function loadConfig(env = process.env) {
         { min: DEFAULTS.crawlPolitenessMs, max: 60_000 },
       ),
     },
+
+    /**
+     * 重繪商城的金流（SPEC-reskin-v2 §8）——**只有測試環境**。
+     *
+     * ⛔ 四個值要嘛全有、要嘛全無：缺一個就是示範模式（`reskin/paygate.js`
+     * 的 `paygateStatus` 會把缺的那幾個名字列出來給控制台看）。
+     * 「半套設定」是這個生態踩過的坑：服務 200、健檢綠燈，但功能其實沒接上。
+     *
+     * ⛔ token 只在伺服器端用。版型放進 HTML 的只有一個布林值。
+     */
+    paygate: {
+      url: parseToken(env.LOCALMONKEY_PAYGATE_URL),
+      token: parseToken(env.LOCALMONKEY_PAYGATE_TOKEN),
+      // PayGate 的方案是「product + plan_id」，兩個都得指定（方案在 PayGate 那邊建）
+      product: parseToken(env.LOCALMONKEY_PAYGATE_PRODUCT),
+      planId: parseToken(env.LOCALMONKEY_PAYGATE_PLAN),
+    },
   };
 }
 

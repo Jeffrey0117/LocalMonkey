@@ -12,6 +12,9 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
   ＋ **v7（§12）**：`no-translate` 規則型別（哪些段不要餵給模型）
 - [`docs/SPEC-reskin.md`](docs/SPEC-reskin.md) —— **v8：重繪**（第三種模式：
   上游當**資料來源**，用我們自己的版型重畫）
+- [`docs/SPEC-reskin-v2.md`](docs/SPEC-reskin-v2.md) —— **v9：重繪第二輪**
+  （收斂成「html模板大王」：換色票、拿掉模仿來的東西、方案只留一檔、
+  無限載入、**測試環境的金流**）
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -280,13 +283,23 @@ src/reskin/
   dom.js          HTML → 小樹（複用 translate/segment.js 的分詞器原語）
   query.js        樹上跑選擇器（複用 rules/scope.js 的文法與比對）
   config.js       抽取設定的驗證與編譯
-  extract.js      設定 + HTML → 資料模型（listing / product）
+  extract.js      設定 + HTML → 資料模型（listing / product）＋ DATA_MODEL_VERSION
   url.js          上游網址 → 代理路徑（版型層因此只拿到本站路徑）
-  pricing.js      價格方案（上游沒有價格，我們自己定；不接金流）
+  pricing.js      價格方案（上游沒有價格，我們自己定；預設只有一檔）
+  paygate.js      金流（v9，**只有測試環境**）：env 齊了才算接上，金鑰只在伺服器端
   presets/        各站的抽取設定（**資料**，會被丟掉的那一層）
-  themes/         版型（資產）—— shopee/{index,parts,listing,product,css}.js
+  themes/         版型（資產）—— mall/{index,parts,listing,product,css}.js
   service.js      門面：代理與控制台叫的都是這支
-src/public/reskin-shop.js   購物車／會員／下載閘門（localStorage，純前端示範）
+src/public/reskin-shop.js   購物車／結帳面板（localStorage ＋ /__lm/reskin/checkout）
+src/public/reskin-feed.js   列表頁的無限載入（v9，IntersectionObserver ＋ 照網址去重）
+```
+
+v9 多出來的三支**前台**端點掛在 `/__lm`（免認證，商店前台本來就是匿名的）：
+
+```
+GET  /__lm/reskin/listing?site=&path=  下一頁 → { ok, html(卡片), page, totalPages, nextPath }
+POST /__lm/reskin/checkout             建立結帳（Bearer 只在伺服器端送出去）
+GET  /__lm/reskin/paid?site=           從付款頁回來的那一頁（**拿不到付款結果**，見地雷 69）
 ```
 
 ### ⛔ v8 的依賴例外：為什麼仍然沒有引入 HTML parser
@@ -427,8 +440,11 @@ reskin_cache    key(PK) / site_id → sites(ON DELETE CASCADE) / path
 - **`reskin_theme` 的 NULL ＝「用預設版型」**，語意同 `translate_model`。
   但**版型名會擋**不認得的值（下拉選單選的，收到怪值只會是程式打錯；
   存下去的話畫面會悄悄退回預設，而使用者以為自己換成功了）。
-- **`reskin_cache` 的 key 含上游 HTML 的 sha256**（規格 §3.3）→ 上游一變 key
-  就自然錯開，**不需要任何失效邏輯**（同 `assets` 的內容定址）。
+- **`reskin_cache` 的 key 含上游 HTML 的 sha256 與 `DATA_MODEL_VERSION`**
+  （規格 §3.3）→ 上游一變 key 就自然錯開，**不需要任何失效邏輯**（同 `assets`
+  的內容定址）。版本號是 v9 補的：上游的雜湊描述不了「**我們的**抽取層變了」，
+  少了它就會出現「程式新、畫面舊、log 顯示 cache=hit」（地雷 67）。
+  **改資料模型的形狀就要把 `extract.js` 的 `DATA_MODEL_VERSION` +1。**
   key 用**長度前綴**串，不是分隔符：`('a','b/c')` 與 `('a/b','c')` 用 `/` 串
   會撞成同一個 key ＝某一頁拿到另一頁的資料。
 - 快取是**純衍生資料** → 可以放心 CASCADE、放心整站清掉。
@@ -807,6 +823,40 @@ reskin_cache    key(PK) / site_id → sites(ON DELETE CASCADE) / path
     badge 吃成「版」；測試用的 userscript 也照樣注入、照樣改標題。
     規格 §5 要的就是這個行為，所以**不要在版型裡繞過它** ——
     真正的修法是使用者把那條規則收個 scope。
+
+### v9（重繪第二輪）踩到的
+
+67. **⛔ 內容定址的快取擋不住「**我們自己的程式**變了」。**
+    `reskin_cache` 的 key 本來只有「路徑 + 上游 HTML 的 sha256」，而那個雜湊
+    描述的是**上游那一份**。資料模型加了 `nextPath` 之後，舊的快取照樣命中 ——
+    程式是新的、畫面是舊的，而且 `x-lm-reskin` 還寫著 `cache=hit` 一切正常。
+    症狀是「改了抽取層完全沒反應」，跟「設定沒存到」長得一模一樣。
+    已修：key 多吃一個 `DATA_MODEL_VERSION`（`extract.js`）。
+    **判準**：內容定址的 key 要含「所有會影響輸出的輸入」，而**程式本身也是
+    一個輸入**。（同一個家族還有一條：改抽取**設定**要清快取 —— 那個 API 層
+    已經在做了，但直接寫 DB 的腳本不會，驗證時被騙了一次。）
+68. **⛔ 「首頁」常常不是分頁的一部分。** 無限載入第一版在 `/page/N` 上好好的，
+    唯獨使用者最常開的首頁不會自動載入 —— 因為 templatemo 的首頁**沒有頁碼列**
+    （它是精選 12 件，完整清單從 `/page/1` 開始）。兩個教訓：
+    ① 抽取層在「我在第幾頁」不明的時候要從**最小**的頁碼連結接下去，不是回 null
+    ② 因此前端一定要**照網址去重**（首頁的 12 件也在第 1 頁裡）。
+    一般原則：分頁的入口頁與第一頁重疊是常態，去重比「算得準」可靠。
+69. **⛔ 金流的「返回商店」那一跳帶不回付款結果。** 藍新的 `BackURL` 只是一顆
+    返回按鈕，真正的結果是 server-to-server 打到 PayGate 的 notify。
+    所以回跳頁不准寫「付款成功」—— 寫了就是在猜，而猜錯的方向剛好是最糟的。
+    （PayGate 那支端點是**定期定額**，所以這條路做出來的是訂閱不是單次購買；
+    要收一次性的錢得先在 PayGate 那邊開端點。契約是 2026-11-19 實打出來的，
+    寫在 `reskin/paygate.js` 的檔頭，別憑記憶改。）
+70. **⛔ 「品名顯示成別的字」不一定是抽取層的錯 —— 先問那段字是誰寫上去的。**
+    實測：商品頁的品名變成「這頁經過 LocalMonkey」而麵包屑是對的 ——
+    因為資料本來就是對的，動手腳的是使用者自己那支還開著的注入測試腳本
+    （`document.querySelector("h1").replaceChildren(…)` ＋ MutationObserver）。
+    注入跑在重繪**之後**（respond.js 的順序），所以伺服器端怎麼改都救不了。
+    版型因此改用 `role="heading" aria-level="1"` 而不是 `<h1>`：
+    「第一個 h1 就是標題」是油猴腳本最常見的假設，而重繪過的文件是**我們的**
+    版面、不是它們當初寫腳本時看到的那一頁。
+    **判準**：同一份資料「這裡對、那裡不對」的時候，差別不在資料層，
+    在那兩個地方**之後**還經過了什麼。
 
 ---
 

@@ -21,7 +21,10 @@ const path = require('node:path');
  */
 
 const THEMES_DIR = path.join(__dirname, '..', '..', 'src', 'reskin', 'themes');
-const SHOP_SCRIPT = path.join(__dirname, '..', '..', 'src', 'public', 'reskin-shop.js');
+/** 版型的瀏覽器端（購物車／結帳、無限載入）跟版型同一條紀律 */
+const BROWSER_SCRIPTS = ['reskin-shop.js', 'reskin-feed.js'].map((name) =>
+  path.join(__dirname, '..', '..', 'src', 'public', name),
+);
 
 /**
  * 被禁的字樣。
@@ -49,7 +52,7 @@ function filesUnder(dir) {
 }
 
 test('版型層不含任何上游的字樣或選擇器', () => {
-  const files = [...filesUnder(THEMES_DIR), SHOP_SCRIPT];
+  const files = [...filesUnder(THEMES_DIR), ...BROWSER_SCRIPTS];
   assert.ok(files.length >= 6, `掃到的檔案太少，是不是路徑錯了？${files.join(', ')}`);
 
   for (const file of files) {
@@ -101,7 +104,7 @@ test('版型層不 require 抽取層，也不碰 DB', () => {
  * 定位是瀏覽器給的，CSS 裡沒有 `position: fixed`）與一閃而過的 toast。
  */
 test('購買區不是浮動層：CSS 裡唯一的 fixed 是 toast', () => {
-  const { THEME_CSS } = require('../../src/reskin/themes/shopee/css.js');
+  const { THEME_CSS } = require('../../src/reskin/themes/mall/css.js');
 
   const fixed = [...THEME_CSS.matchAll(/([^{}]+)\{[^{}]*position:fixed/g)].map((match) =>
     match[1].trim(),
@@ -109,7 +112,7 @@ test('購買區不是浮動層：CSS 裡唯一的 fixed 是 toast', () => {
 
   assert.deepEqual(fixed, ['.lm-toast'], `不該有浮動層：${fixed.join(', ')}`);
 
-  const product = require('../../src/reskin/themes/shopee/product.js');
+  const product = require('../../src/reskin/themes/mall/product.js');
   assert.ok(typeof product.renderBuy === 'function');
   assert.ok(!THEME_CSS.includes('.lm-buy{position'), '購買區不准自己定位');
 });

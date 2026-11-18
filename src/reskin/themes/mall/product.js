@@ -1,19 +1,19 @@
 'use strict';
 
 /**
- * 商品頁（SPEC-reskin §4.2）。
+ * 商品頁（SPEC-reskin §4.2，SPEC-reskin-v2 §3 / §5 / §6）。
  *
  * ⛔ **購買區是版型的一部分，不是浮動層。** 上一輪用 `position: fixed` 做了一個
  * 浮動購買面板，使用者的評語是「你怎麼另外加開一個鬼浮動面板」——
  * 他是對的：那是貼在別人的頁面上，不是做進版面裡。
  * 這支把購買區放在 `.lm-product` 的**第二欄**，跟主圖同一個 grid；
  * 整份文件是我們產生的，所以它就是版面本身。CSS 裡沒有任何 `position: fixed`
- * 的購買面板（唯一的覆蓋層是按下載才開的 `<dialog>`，見 `parts.js`）。
+ * 的購買面板（唯一的覆蓋層是按「立即購買」才開的 `<dialog>`，見 `parts.js`）。
  *
  * ⛔ 不准出現任何上游的字樣或選擇器。
  */
 
-const { escapeHtml, formatCount, formatMoney, shopInitial } = require('./parts.js');
+const { escapeHtml, formatCount, formatMoney, shopInitial, heading, BRAND } = require('./parts.js');
 
 function renderGallery(data) {
   const images = data.gallery.length > 0 ? data.gallery : [];
@@ -45,20 +45,26 @@ function renderGallery(data) {
 }
 
 /**
- * 規格選擇 ＝ 授權方案（規格 §4.2）。
+ * 方案。
  *
- * ⛔ **預設選中的是「價格區塊印的那一檔」，不是第一檔。**
+ * ⛔ **只有一檔的時候整塊不畫**（SPEC-reskin-v2 §3）：使用者的話是
+ * 「別分什麼個人企業，也別寫什麼授權的鬼」—— 商品頁就是一個價格，直接買。
+ * 資料結構留著（之後可能真的要分級），所以兩檔以上還是畫得出來，
+ * 但**不准畫一個只有一顆、按了沒差別的選擇區**。
+ *
+ * 真的畫出來的時候，預設選中的是「價格區塊印的那一檔」而不是第一檔：
  * 第一版預設選第一個方案，而價格區塊印的是 `headlinePrice()`（最便宜的
  * **付費**方案）—— 於是伺服器端印 `NT$199`，`shop.js` 一載入就照「選中的方案」
- * 把它改成 `免費`，使用者看到的是價格自己跳掉。
- * 兩邊要用同一個事實：選中的就是 headline 那一檔。
+ * 把它改成免費，使用者看到的是價格自己跳掉（地雷 62）。
  */
 function renderPlans({ currency, plans, headline }) {
+  if (plans.length < 2) return '';
+
   const selected = plans.find((plan) => plan.price === headline.price) ?? plans[0];
 
   return `
   <div class="lm-field">
-    <h2>授權方案</h2>
+    <h2>方案</h2>
     <div class="lm-field-body" data-lm-plan-group>
       ${plans
         .map(
@@ -78,11 +84,11 @@ function renderPlans({ currency, plans, headline }) {
 
 function renderStatsRow(data) {
   const views = formatCount(data.stats.views);
-  const downloads = formatCount(data.stats.downloads);
+  const sold = formatCount(data.stats.downloads);
 
   const cells = [
     views === null ? null : `<span><b>${escapeHtml(views)}</b> 瀏覽</span>`,
-    downloads === null ? null : `<span><b>${escapeHtml(downloads)}</b> 已售出</span>`,
+    sold === null ? null : `<span><b>${escapeHtml(sold)}</b> 已售出</span>`,
     data.id === null ? null : `<span>商品編號 ${escapeHtml(data.id)}</span>`,
   ].filter((cell) => cell !== null);
 
@@ -113,16 +119,18 @@ function renderPriceBlock({ currency, headline }) {
 /**
  * 購買區。
  *
- * 「立即下載」的閘門在 `shop.js`：不是會員就開方案面板，而不是跳去原始連結
- * （規格 §4.3，這一塊就是 v6 那支 userscript 被版型吸收掉的功能）。
- * 下載連結抽不到就不畫那顆按鈕 —— 畫一顆按了沒事的按鈕比沒有更糟。
+ * ⛔ **只有兩顆按鈕：預覽 ｜ 立即購買**（SPEC-reskin-v2 §6）。
+ * 上一版下面還有一排「下載檔案 / 線上預覽」，而「加入購物車」擺在
+ * 「立即購買」旁邊 —— 四顆按鈕裡有兩顆在做同一件事。
+ * 現在「預覽」就是開上游的預覽網址（資料模型的 `links.preview`，
+ * 抽取層已經換成代理路徑），抽不到就不畫那一顆。
  */
 function renderBuy(data, pricing) {
   const { currency, plans, headline } = pricing;
 
   return `
   <div class="lm-buy">
-    <h1>${escapeHtml(data.name ?? '未命名商品')}</h1>
+    ${heading(1, 'lm-buy-title', data.name ?? '未命名商品')}
     ${renderStatsRow(data)}
     ${renderPriceBlock({ currency, headline })}
     ${renderPlans({ currency, plans, headline })}
@@ -137,49 +145,43 @@ function renderBuy(data, pricing) {
       </div>
     </div>
     <div class="lm-actions">
-      <button class="lm-btn lm-btn-ghost" type="button" data-lm-add>加入購物車</button>
-      <button class="lm-btn lm-btn-solid" type="button" data-lm-buy>立即購買</button>
-    </div>
-    <div class="lm-actions">
-      ${
-        data.links.download === null
-          ? ''
-          : `<a class="lm-btn lm-btn-flat" href="${escapeHtml(
-              data.links.download,
-            )}" data-lm-download>下載檔案</a>`
-      }
       ${
         data.links.preview === null
           ? ''
-          : `<a class="lm-btn lm-btn-flat" href="${escapeHtml(
+          : `<a class="lm-btn lm-btn-ghost" href="${escapeHtml(
               data.links.preview,
-            )}" target="_blank" rel="noopener">線上預覽</a>`
+            )}" target="_blank" rel="noopener">預覽</a>`
       }
+      <button class="lm-btn lm-btn-solid" type="button" data-lm-buy>立即購買</button>
     </div>
-    <p class="lm-note">購物車與會員狀態只存在這台瀏覽器（localStorage），沒有接金流。</p>
   </div>`;
 }
 
-function renderShop(data, { siteName }) {
-  const downloads = formatCount(data.stats.downloads);
+function renderShop(data) {
+  const sold = formatCount(data.stats.downloads);
 
   return `
   <section class="lm-shop">
-    <div class="lm-shop-avatar">${escapeHtml(shopInitial(siteName))}</div>
+    <div class="lm-shop-avatar">${escapeHtml(shopInitial(BRAND))}</div>
     <div class="lm-shop-main">
-      <b>${escapeHtml(siteName)}</b>
-      <p>official store・回覆率 98%・平均回覆時間 數分鐘內</p>
+      <b>${escapeHtml(BRAND)}</b>
+      <p>官方商店・回覆率 98%・平均回覆時間 數分鐘內</p>
     </div>
     <div class="lm-shop-metrics">
       <div>評價<b>4.9 / 5.0</b></div>
       <div>商品<b>上架中</b></div>
-      ${downloads === null ? '' : `<div>累積下載<b>${escapeHtml(downloads)}</b></div>`}
+      ${sold === null ? '' : `<div>累積售出<b>${escapeHtml(sold)}</b></div>`}
     </div>
     <div><button class="lm-btn lm-btn-flat" type="button" data-lm-follow>追蹤賣家</button></div>
   </section>`;
 }
 
-/** 規格表（規格 §4.2：標籤、新增日期、觀看數、下載數） */
+/**
+ * 規格表。
+ *
+ * 「下載次數」改叫**售出次數**（SPEC-reskin-v2 §5）—— 這是展示層的字面改動，
+ * 資料模型的 `stats.downloads` 不用動（那個名字描述的是資料來源的語意）。
+ */
 function renderSpecs(data) {
   const rows = [
     data.tags.length === 0
@@ -198,7 +200,7 @@ function renderSpecs(data) {
     data.stats.views === null ? null : ['瀏覽次數', escapeHtml(formatCount(data.stats.views))],
     data.stats.downloads === null
       ? null
-      : ['下載次數', escapeHtml(formatCount(data.stats.downloads))],
+      : ['售出次數', escapeHtml(formatCount(data.stats.downloads))],
     data.id === null ? null : ['商品編號', escapeHtml(data.id)],
   ].filter((row) => row !== null);
 
@@ -225,10 +227,10 @@ function renderDescription(data) {
   </section>`;
 }
 
-function renderCrumb(data, { home, siteName }) {
+function renderCrumb(data, { home }) {
   return `
   <nav class="lm-crumb">
-    <a href="${escapeHtml(home)}">${escapeHtml(siteName)}</a>
+    <a href="${escapeHtml(home)}">${escapeHtml(BRAND)}</a>
     <span>&rsaquo;</span>
     ${
       data.tags[0]?.url
@@ -242,7 +244,7 @@ function renderCrumb(data, { home, siteName }) {
 /**
  * @param {object} data `extract.js` 的 product 資料
  * @param {{ currency, plans, headline }} pricing
- * @param {{ siteName: string, home: string }} context
+ * @param {{ home: string }} context
  */
 function renderProduct(data, pricing, context) {
   return `
@@ -251,14 +253,14 @@ function renderProduct(data, pricing, context) {
     ${renderGallery(data)}
     ${renderBuy(data, pricing)}
   </section>
-  ${renderShop(data, context)}
+  ${renderShop(data)}
   ${renderDescription(data)}
   ${renderSpecs(data)}
   <div style="height:24px"></div>`;
 }
 
-function productTitle(data, siteName) {
-  return `${data.name ?? '商品'} | ${siteName} 模板商城`;
+function productTitle(data, brand) {
+  return `${data.name ?? '商品'} | ${brand}`;
 }
 
-module.exports = { renderProduct, renderBuy, renderGallery, renderSpecs, productTitle };
+module.exports = { renderProduct, renderBuy, renderGallery, renderSpecs, renderShop, productTitle };

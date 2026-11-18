@@ -325,14 +325,32 @@ test('⛔ 只有指向這個站的網址留得下來，其他一律丟掉', () =
 
 /* -------------------------------- 價格 -------------------------------- */
 
-test('價格：預設三檔，headline 是最便宜的付費方案', () => {
+/**
+ * ⛔ 預設**只有一檔**（SPEC-reskin-v2 §3：「別分什麼個人企業，也別寫什麼
+ * 授權的鬼」）。多檔的 headline 邏輯還在（資料結構留著），所以兩種都釘。
+ */
+test('價格：預設只有一檔；多檔時 headline 是最便宜的付費方案', () => {
   const { ok, value } = compilePricing(null);
 
   assert.equal(ok, true);
   assert.deepEqual(value.plans, [...DEFAULT_PLANS]);
+  assert.equal(value.plans.length, 1, '預設不准長出第二檔');
+  assert.deepEqual(headlinePrice(value.plans), { price: 199, originalPrice: null, hasFree: false });
 
-  const headline = headlinePrice(value.plans);
-  assert.deepEqual(headline, { price: 199, originalPrice: 699, hasFree: true });
+  const tiered = compilePricing({
+    plans: [
+      { id: 'free', name: '免費', price: 0 },
+      { id: 'one', name: '單檔', price: 199 },
+      { id: 'all', name: '全站', price: 699 },
+    ],
+  });
+
+  assert.equal(tiered.ok, true);
+  assert.deepEqual(headlinePrice(tiered.value.plans), {
+    price: 199,
+    originalPrice: 699,
+    hasFree: true,
+  });
 });
 
 test('價格：壞掉的方案會被擋下來（這是表單填的，不是手寫的）', () => {
