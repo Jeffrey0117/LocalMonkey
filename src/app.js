@@ -9,6 +9,7 @@ const { createAdminRouter } = require('./routes/admin-page.js');
 const { createProxyHandlers } = require('./proxy/handler.js');
 const { createFaviconService } = require('./services/favicon.js');
 const { createTranslationService } = require('./translate/service.js');
+const { createSiteRulesService } = require('./rules/service.js');
 const { createCrawler } = require('./translate/crawl.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
@@ -60,12 +61,20 @@ function createApp({
   const crawler = createCrawler({ store, config, logger, translation, fetchImpl });
   app.locals.crawler = crawler;
 
+  /**
+   * 改造規則（v5）。沒有狀態（每個請求重讀 DB），所以這個 instance 只是
+   * 把 store 與 logger 綁上去而已。
+   */
+  const siteRules = createSiteRulesService({ store, logger });
+  app.locals.siteRules = siteRules;
+
   const { handleProxyRoute, handleFallbackRoute } = createProxyHandlers({
     store,
     config,
     logger,
     fetchImpl,
     translation,
+    siteRules,
   });
 
   // 保留路徑：不進代理。

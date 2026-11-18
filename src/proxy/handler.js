@@ -89,7 +89,7 @@ function upstreamFailedPage(site, error) {
 /**
  * 代理的兩個入口（主路由與根路徑 fallback）共用同一條管線。
  */
-function createProxyHandlers({ store, config, logger, fetchImpl, translation }) {
+function createProxyHandlers({ store, config, logger, fetchImpl, translation, siteRules }) {
   async function proxy(req, res, { site, pathWithQuery }) {
     try {
       await assertOriginAllowed(site.target_origin, { allowPrivate: config.allowPrivate });
@@ -138,6 +138,7 @@ function createProxyHandlers({ store, config, logger, fetchImpl, translation }) 
         pathWithQuery,
         store,
         translate: translation?.translateHtml,
+        rules: siteRules?.applyToHtml,
       });
     } catch (error) {
       if (!(error instanceof UpstreamError)) throw error;

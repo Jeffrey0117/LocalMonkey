@@ -78,11 +78,15 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
    *
    * 任何一步出錯都回原本那份 HTML —— 翻譯是加值功能，不准讓頁面開不起來。
    *
+   * `onStats` 是給 `x-lm-translate` header 用的（SPEC-rules §5.2）——
+   * 「這一頁 85 段裡命中了 12 段」是伺服器端才看得到的事實，而使用者看到的
+   * 症狀是「這邊怎麼沒翻譯到」。回報用的出口，不影響回傳值。
+   *
    * @param {string} html latin1 管線字串（代理的 HTML 改寫全程在 latin1 上）
-   * @param {{ site: object, contentType: string|null }} input
+   * @param {{ site: object, contentType: string|null, onStats?: (stats: object) => void }} input
    * @returns {string} 回填後的 latin1 字串
    */
-  function translateHtml(html, { site, contentType }) {
+  function translateHtml(html, { site, contentType, onStats }) {
     const active = settingsFor(site, config);
     if (!active.enabled) return html;
 
@@ -115,6 +119,13 @@ function createTranslationService({ store, config, logger, fetchImpl, client }) 
       }
 
       const rendered = renderTranslated(html, items, resolve, { encode: toLatin1 });
+
+      onStats?.({
+        total: items.length,
+        hits: rendered.applied,
+        misses: misses.length,
+        unique: texts.length,
+      });
 
       // 真的翻了東西才改 `<html lang>`：一份還是英文的頁面不該宣告自己是中文
       return rendered.applied > 0

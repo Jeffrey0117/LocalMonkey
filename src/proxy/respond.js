@@ -40,20 +40,30 @@ function selectScripts(store, site, pathname) {
  *   1. 網址改寫（`lib/html.js`）
  *   2. 翻譯回填（v4）—— 要在網址改寫**之後**：切段器算的是座標，
  *      任何之後發生的字串改動都會讓那些座標失效
- *   3. 腳本注入 —— 只在頭尾加 tag，不影響前面兩步
+ *   3. 改造規則（v5）—— 文字規則套在**翻譯後**的文字上（SPEC-rules §1），
+ *      所以 `templatemo → templatee` 不會被翻譯快取汙染；hide 的 CSS 插在
+ *      `</head>` 之前
+ *   4. 腳本注入 —— 只在頭尾加 tag，不影響前面三步
  *
- * 翻譯層同步、只查 SQLite；壞掉就回原字串（見 translate/service.js）。
+ * 翻譯層與規則層都是同步的、只查 SQLite；壞掉就回原字串
+ * （見 translate/service.js 與 rules/service.js）。
  */
-function transformHtml(buffer, { site, scripts, translate, contentType }) {
+function transformHtml(buffer, { site, scripts, translate, rules, contentType, onStats }) {
   const source = buffer.toString('latin1');
   const rewritten = rewriteDocumentUrls(source, {
     siteId: site.id,
     targetOrigin: site.target_origin,
   });
 
-  const translated = translate ? translate(rewritten, { site, contentType }) : rewritten;
+  const translated = translate
+    ? translate(rewritten, { site, contentType, onStats: onStats?.translate })
+    : rewritten;
 
-  return Buffer.from(injectScripts(translated, scripts), 'latin1');
+  const ruled = rules
+    ? rules(translated, { site, contentType, onStats: onStats?.rules })
+    : translated;
+
+  return Buffer.from(injectScripts(ruled, scripts), 'latin1');
 }
 
 /**
@@ -76,6 +86,23 @@ function copyHeaders(res, response, site, { html }) {
 }
 
 /**
+ * 兩個給人除錯用的 header（SPEC-rules §5.2）。
+ *
+ * 「怎麼這邊沒翻譯到」是使用者最常問的一句，而伺服器端看到的東西（快取命中
+ * 幾段）在瀏覽器裡完全看不出來。`x-lm-translate: 12/85` 就是那個答案。
+ *
+ * 要在 `res.end()` **之前**設好，所以 body 先組好再送。
+ */
+function setDebugHeaders(res, stats) {
+  if (stats.translate) {
+    res.setHeader('x-lm-translate', `${stats.translate.hits}/${stats.translate.total}`);
+  }
+  if (stats.rules) {
+    res.setHeader('x-lm-rules', `hide=${stats.rules.hide} text=${stats.rules.text}`);
+  }
+}
+
+/**
  * @param {import('express').Response} res
  * @param {{
  *   site: object,
@@ -84,9 +111,10 @@ function copyHeaders(res, response, site, { html }) {
  *   pathWithQuery: string,
  *   store: object,
  *   translate?: (html: string, context: object) => string,
+ *   rules?: (html: string, context: object) => string,
  * }} input
  */
-function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store, translate }) {
+function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store, translate, rules }) {
   const contentType = response.headers.get('content-type');
   const html = isHtmlResponse(contentType);
   const hasBody = !BODYLESS_STATUSES.has(response.status) && buffer.length > 0;
@@ -106,7 +134,32 @@ function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store
   }
 
   const scripts = selectScripts(store, site, pathnameOf(pathWithQuery));
-  res.end(transformHtml(buffer, { site, scripts, translate, contentType }));
+  const stats = {};
+  const body = transformHtml(buffer, {
+    site,
+    scripts,
+    translate,
+    rules,
+    contentType,
+    onStats: {
+      translate: (value) => {
+        stats.translate = value;
+      },
+      rules: (value) => {
+        stats.rules = value;
+      },
+    },
+  });
+
+  setDebugHeaders(res, stats);
+  res.end(body);
 }
 
-module.exports = { sendProxiedResponse, selectScripts, transformHtml, isHtmlResponse, pathnameOf };
+module.exports = {
+  sendProxiedResponse,
+  selectScripts,
+  transformHtml,
+  isHtmlResponse,
+  pathnameOf,
+  setDebugHeaders,
+};

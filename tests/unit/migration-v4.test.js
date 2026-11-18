@@ -23,10 +23,12 @@ function tablesOf(db) {
     .map((row) => row.name);
 }
 
-test('SCHEMA_VERSION 走到 4，而且舊的 migration 一條都沒被改動', () => {
-  assert.equal(SCHEMA_VERSION, 4);
+test('v4 是 migration 鏈的第四筆，而且舊的一條都沒被改動', () => {
+  // SCHEMA_VERSION 會跟著新的 migration 往上走（v5 = SPEC-rules），
+  // 這條測試在意的是「1~4 還在原位、順序沒變」。
+  assert.ok(SCHEMA_VERSION >= 4);
   assert.deepEqual(
-    MIGRATIONS.map((migration) => migration.version),
+    MIGRATIONS.map((migration) => migration.version).slice(0, 4),
     [1, 2, 3, 4],
   );
 });
@@ -167,7 +169,7 @@ test('⛔ 從 v3 升上來：既有的網站與腳本原封不動，翻譯欄位
      VALUES ('scr_x', '我的腳本', 'alert(1)', '{}', ?, ?, 'tok')`,
   ).run(now, now);
 
-  assert.equal(migrate(db), 4);
+  assert.equal(migrate(db), SCHEMA_VERSION);
 
   const site = db.prepare('SELECT * FROM sites WHERE id = ?').get('templatemo-com');
   assert.equal(site.name, 'templatemo');
@@ -192,8 +194,8 @@ test('重複跑 migrate 不會出事，也不會清掉翻譯快取', (t) => {
      VALUES ('h', 'Contact', 'zh-TW', 'qwen2.5:latest', '聯絡我們', 'manual', 'now', 'now')`,
   ).run();
 
-  assert.equal(migrate(db), 4);
-  assert.equal(migrate(db), 4);
+  assert.equal(migrate(db), SCHEMA_VERSION);
+  assert.equal(migrate(db), SCHEMA_VERSION);
 
   const row = db.prepare('SELECT * FROM translations WHERE hash = ?').get('h');
   assert.equal(row.translated, '聯絡我們');
