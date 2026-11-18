@@ -237,6 +237,50 @@ CREATE INDEX idx_queue_attempts       ON translate_queue (attempts, created_at);
 CREATE INDEX idx_crawl_jobs_site      ON crawl_jobs (site_id, created_at DESC);
 `;
 
+/**
+ * v5：使用者自訂的站台改造規則（SPEC-rules §2 / §3.6）。
+ *
+ * `site_rules.scope` 不在規格 §2 的欄位表裡 —— 它是 §3.2 自己追加的
+ * （卡片標題那條規則全站套會把「2026 年的…」一起改掉，所以要能限定範圍）。
+ *
+ * `resource_overrides.sha256` **是外鍵**，指向內容定址的 `assets`：
+ * 覆寫指到一個不存在的檔案的話，使用者看到的是「換了圖但圖破了」，
+ * 而那時候已經來不及知道原因。寧可在寫入當下就丟錯。
+ *
+ * `UNIQUE(site_id, path)`：一個站的一條路徑只會有一種覆寫 ——
+ * 「再上傳一張」的語意是換掉，不是長出第二列（見 db/resource-overrides.js）。
+ */
+const SCHEMA_V5 = `
+CREATE TABLE site_rules (
+  id          TEXT PRIMARY KEY,
+  site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('hide', 'text-replace', 'text-rewrite')),
+  pattern     TEXT NOT NULL,
+  replacement TEXT,
+  scope       TEXT,
+  note        TEXT,
+  enabled     INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE resource_overrides (
+  id           TEXT PRIMARY KEY,
+  site_id      TEXT NOT NULL REFERENCES sites(id)      ON DELETE CASCADE,
+  path         TEXT NOT NULL,
+  sha256       TEXT NOT NULL REFERENCES assets(sha256),
+  content_type TEXT NOT NULL,
+  enabled      INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL,
+  UNIQUE (site_id, path)
+);
+
+CREATE INDEX idx_site_rules_site ON site_rules (site_id, order_index, id);
+CREATE INDEX idx_resource_overrides_site ON resource_overrides (site_id, path);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -253,6 +297,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 4,
     up: (db) => db.exec(SCHEMA_V4),
+  }),
+  Object.freeze({
+    version: 5,
+    up: (db) => db.exec(SCHEMA_V5),
   }),
 ]);
 

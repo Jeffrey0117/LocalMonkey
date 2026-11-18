@@ -6,6 +6,8 @@ const userscripts = require('./userscripts.js');
 const assets = require('./assets.js');
 const translations = require('./translations.js');
 const crawlJobs = require('./crawl-jobs.js');
+const siteRules = require('./site-rules.js');
+const resourceOverrides = require('./resource-overrides.js');
 
 /**
  * 把 repository 函式綁上同一個 db handle，路由層就不用到處傳 db。
@@ -73,6 +75,25 @@ function createStore(db) {
       listFailed: (options) => translations.listFailedQueue(db, options),
       remove: (hash) => translations.removeQueueEntry(db, hash),
     },
+    /* v5：使用者自訂的站台改造規則與資源覆寫（SPEC-rules） */
+    siteRules: {
+      create: (siteId, input) => siteRules.createSiteRule(db, siteId, input),
+      get: (id) => siteRules.getSiteRule(db, id),
+      listBySite: (siteId) => siteRules.listSiteRules(db, siteId),
+      update: (id, patch) => siteRules.updateSiteRule(db, id, patch),
+      remove: (id) => siteRules.removeSiteRule(db, id),
+      reorder: (siteId, ids) => siteRules.reorderSiteRules(db, siteId, ids),
+      counts: () => siteRules.countSiteRules(db),
+    },
+    resourceOverrides: {
+      put: (siteId, input) => resourceOverrides.putResourceOverride(db, siteId, input),
+      get: (id) => resourceOverrides.getResourceOverride(db, id),
+      listBySite: (siteId) => resourceOverrides.listResourceOverrides(db, siteId),
+      find: (siteId, path) => resourceOverrides.findResourceOverride(db, siteId, path),
+      update: (id, patch) => resourceOverrides.updateResourceOverride(db, id, patch),
+      remove: (id) => resourceOverrides.removeResourceOverride(db, id),
+    },
+
     crawlJobs: {
       create: (input) => crawlJobs.createCrawlJob(db, input),
       get: (id) => crawlJobs.getCrawlJob(db, id),
