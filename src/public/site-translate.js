@@ -131,9 +131,17 @@ window.LocalMonkeySiteTranslate = (function createSiteTranslate() {
           >${escapeHtml(site.glossary.join('\n'))}</textarea>
         </div>
 
+        <div class="field field-wide">
+          <p class="notice">
+            第一次造訪某一頁會先看到原文（背景正在翻，下次載入就是中文）——
+            這是設計行為，不是壞掉。<strong>不想讓任何人看到英文</strong>的話，
+            在這裡按「預先翻譯整站」先把整站翻好。
+          </p>
+        </div>
+
         <div class="field field-wide translate-settings-actions">
-          <button type="button" class="primary" data-action="save-translate">儲存翻譯設定</button>
-          <button type="button" class="ghost" data-action="crawl" ${isRunning(job) ? 'disabled' : ''}>
+          <button type="button" class="ghost" data-action="save-translate">儲存翻譯設定</button>
+          <button type="button" class="primary" data-action="crawl" ${isRunning(job) ? 'disabled' : ''}>
             預先翻譯整站
           </button>
           <label class="crawl-option">

@@ -136,11 +136,58 @@ test('v4：網站分頁的表頭有「翻譯」欄，而且展開列的 colspan 
   assert.ok(panel, '要有網站分頁');
 
   const headers = [...panel[0].matchAll(/<th>([^<]*)<\/th>/g)].map((match) => match[1].trim());
-  assert.deepEqual(headers, ['網站', '代理網址', '目標主機', '掛著的腳本', '翻譯', '啟用']);
+  assert.deepEqual(headers, [
+    '網站',
+    '代理網址',
+    '目標主機',
+    '掛著的腳本',
+    '翻譯',
+    '改造規則',
+    '啟用',
+  ]);
 
-  // ⛔ colspan 對不上的話展開列會把整張表撐歪（而且只有真瀏覽器看得出來）
+  // ⛔ colspan 對不上的話展開列會把整張表撐歪（而且只有真瀏覽器看得出來）。
+  // 現在有兩個展開列（翻譯設定、改造規則），所以**每一個** colspan 都要對 ——
+  // 只檢查「有一個是對的」會漏掉新加的那一個。
   const sitesTab = fs.readFileSync(path.join(PUBLIC_DIR, 'sites-tab.js'), 'utf8');
-  assert.match(sitesTab, new RegExp(`colspan="${headers.length}"`), '展開列的 colspan 要等於欄數');
+  const colspans = [...sitesTab.matchAll(/colspan="(\d+)"/g)].map((match) => Number(match[1]));
+
+  assert.ok(colspans.length >= 2, '展開列應該有兩個（翻譯設定與改造規則）');
+  assert.deepEqual(
+    [...new Set(colspans)],
+    [headers.length],
+    '每一個展開列的 colspan 都要等於欄數',
+  );
+});
+
+/**
+ * ⛔ `byId()` 打錯字是這個專案裡最容易無聲壞掉的一種錯：它回 null，
+ * 然後 `.addEventListener` 丟 TypeError，整個分頁的 init 就停在那裡 ——
+ * 而沒有瀏覽器的環境完全看不到。所以每一個 byId 的目標都要在骨架裡找得到。
+ */
+test('前端 byId() 的每一個 id 都真的在 index.html 裡', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const ids = new Set([...html.matchAll(/id="([^"]+)"/g)].map((match) => match[1]));
+
+  const missing = publicScripts().flatMap((file) => {
+    const source = fs.readFileSync(file, 'utf8');
+
+    return [...source.matchAll(/byId\('([^']+)'\)/g)]
+      .map((match) => match[1])
+      .filter((id) => !ids.has(id))
+      .map((id) => `${path.basename(file)} → #${id}`);
+  });
+
+  assert.deepEqual(missing, []);
+});
+
+test('v5：改造規則的 UI 有接進骨架（前端檔案載了、容器在）', () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+
+  assert.match(html, /<script src="\/admin\/site-rules\.js"><\/script>/);
+  assert.match(html, /id="translate-simplified"/);
+  assert.match(html, /id="translate-scan-simplified"/);
+  assert.match(html, /id="translate-fix-simplified"/);
 });
 
 test('⛔ 設定分頁是唯讀的：骨架裡不准有輸入框（那些是 env，改了要重啟）', () => {

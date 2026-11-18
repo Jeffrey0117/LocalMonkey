@@ -110,5 +110,75 @@ window.LocalMonkeyApi = (function createApi() {
 
     cancelCrawl: (siteId, jobId) =>
       request('POST', `/sites/${id(siteId)}/crawl/${id(jobId)}/cancel`, {}).then((data) => data.job),
+
+    /* ---------------- 快取裡的簡體（SPEC-rules §5.1） ---------------- */
+
+    listSimplified: () => request('GET', '/translate/simplified'),
+
+    /** 預設跳過人工覆寫 —— 那是使用者自己打的字，砍掉不可逆 */
+    retranslateSimplified: (includeManual = false) =>
+      request('POST', '/translate/simplified/retranslate', { includeManual }),
+
+    /* ---------------- v5：站台改造規則（SPEC-rules） ---------------- */
+
+    listSiteRules: (siteId) => request('GET', `/sites/${id(siteId)}/rules`).then((data) => data.rules),
+
+    createSiteRule: (siteId, rule) =>
+      request('POST', `/sites/${id(siteId)}/rules`, rule).then((data) => data.rule),
+
+    updateSiteRule: (siteId, ruleId, patch) =>
+      request('PATCH', `/sites/${id(siteId)}/rules/${id(ruleId)}`, patch).then((data) => data.rule),
+
+    deleteSiteRule: (siteId, ruleId) => request('DELETE', `/sites/${id(siteId)}/rules/${id(ruleId)}`),
+
+    reorderSiteRules: (siteId, ids) =>
+      request('POST', `/sites/${id(siteId)}/rules/reorder`, { ids }).then((data) => data.rules),
+
+    /** 「試一下」：回每條文字規則命中幾段（hide 的由瀏覽器自己數） */
+    dryRunRules: (siteId, path) => request('POST', `/sites/${id(siteId)}/rules/dry-run`, { path }),
+
+    /* ---------------- v5：資源覆寫 ---------------- */
+
+    listResources: (siteId) =>
+      request('GET', `/sites/${id(siteId)}/resources`).then((data) => data.resources),
+
+    /**
+     * 上傳一張圖。
+     *
+     * ⛔ 不走 `request()`：body 是 `File` 本身（raw bytes），不是 JSON。
+     * 這樣前端不用組 FormData、不用 base64 膨脹 33%，後端也不需要
+     * multipart parser（零依賴）。
+     */
+    uploadResource: async (siteId, path, file) => {
+      const response = await fetch(
+        `${BASE}/sites/${id(siteId)}/resources?path=${encodeURIComponent(path)}`,
+        {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'content-type': file.type || 'application/octet-stream' },
+          body: file,
+        },
+      );
+
+      const text = await response.text();
+      const payload = text.length > 0 ? JSON.parse(text) : null;
+
+      if (!response.ok) throw new Error(describeError(response.status, payload));
+      return payload.resource;
+    },
+
+    updateResource: (siteId, resourceId, enabled) =>
+      request('PATCH', `/sites/${id(siteId)}/resources/${id(resourceId)}`, { enabled }).then(
+        (data) => data.resource,
+      ),
+
+    deleteResource: (siteId, resourceId) =>
+      request('DELETE', `/sites/${id(siteId)}/resources/${id(resourceId)}`),
+
+    listResourceCandidates: (siteId, path) =>
+      request(
+        'GET',
+        `/sites/${id(siteId)}/resource-candidates?path=${encodeURIComponent(path)}`,
+      ).then((data) => data.candidates),
   };
 })();

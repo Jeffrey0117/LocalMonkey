@@ -10,6 +10,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
   const { escapeHtml, byId, banner, copyText, delegate } = window.LocalMonkeyUi;
   const api = window.LocalMonkeyApi;
   const siteTranslate = window.LocalMonkeySiteTranslate;
+  const siteRules = window.LocalMonkeySiteRules;
 
   const state = { sites: [] };
 
@@ -60,6 +61,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
         </td>
         <td>${scriptsCell(site)}</td>
         <td>${siteTranslate.summary(site)}</td>
+        <td>${siteRules.summary(site)}</td>
         <td>
           <label class="switch">
             <input type="checkbox" data-action="toggle" ${site.enabled ? 'checked' : ''} />
@@ -67,14 +69,16 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
           </label>
         </td>
       </tr>
-      ${translateRow(site)}`;
+      ${translateRow(site)}
+      ${rulesRow(site)}`;
   }
 
   /**
    * 翻譯設定是「展開在下一列」而不是跳對話框：它有五個欄位 + 進度條，
    * 塞進那一格會把整張表撐歪，而對話框會讓使用者看不到自己在設哪一站。
    *
-   * `colspan` 要跟表頭的欄數一致（6 欄）。
+   * `colspan` 要跟表頭的欄數一致（**7 欄** —— 加「改造規則」那一欄的時候
+   * 漏改這裡，展開的那一塊會縮成一格寬）。
    */
   function translateRow(site) {
     const panel = siteTranslate.panel(site);
@@ -82,7 +86,18 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
     return `
       <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
-        <td colspan="6">${panel}</td>
+        <td colspan="7">${panel}</td>
+      </tr>`;
+  }
+
+  /** 改造規則（SPEC-rules §4）也是展開在下一列，同一個理由 */
+  function rulesRow(site) {
+    const panel = siteRules.panel(site);
+    if (panel === '') return '';
+
+    return `
+      <tr class="translate-row" data-site-id="${escapeHtml(site.id)}">
+        <td colspan="7">${panel}</td>
       </tr>`;
   }
 
@@ -123,6 +138,7 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
     // 翻譯設定（展開列）自己掛一組事件委派，同一個容器
     siteTranslate.init(rows, { siteOf: (element) => siteOf(element), onChanged: () => render() });
+    siteRules.init(rows, { siteOf: (element) => siteOf(element), onChanged: () => render() });
 
     delegate(rows, '[data-action="copy"]', 'click', (event, button) => {
       const site = state.sites.find((entry) => entry.id === siteIdOf(button));

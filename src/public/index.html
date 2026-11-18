@@ -120,6 +120,7 @@
                 <th>目標主機</th>
                 <th>掛著的腳本</th>
                 <th>翻譯</th>
+                <th>改造規則</th>
                 <th>啟用</th>
               </tr>
             </thead>
@@ -156,8 +157,12 @@
             <span>只看翻不動的</span>
           </label>
           <button type="button" class="ghost" id="translate-run">現在就翻</button>
+          <button type="button" class="ghost" id="translate-scan-simplified">掃簡體</button>
+          <button type="button" class="ghost" id="translate-fix-simplified">重翻簡體段</button>
           <button type="button" class="ghost" id="translate-refresh">重新整理</button>
         </div>
+
+        <div class="translate-simplified" id="translate-simplified"></div>
 
         <div class="table-scroll">
           <table class="translations">
@@ -251,6 +256,7 @@
     <script src="/admin/scripts-table.js"></script>
     <script src="/admin/scripts-tab.js"></script>
     <script src="/admin/site-translate.js"></script>
+    <script src="/admin/site-rules.js"></script>
     <script src="/admin/sites-tab.js"></script>
     <script src="/admin/translate-tab.js"></script>
     <script src="/admin/settings-tab.js"></script>

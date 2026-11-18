@@ -1107,3 +1107,168 @@ tbody tr:last-child td {
   font-size: 12px;
   color: var(--text-dim);
 }
+
+/* --------------------- 站台的改造規則（展開列，SPEC-rules §4） --------------------- */
+
+.site-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.site-rules-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.site-rules-head .muted {
+  font-size: 12px;
+}
+
+.rule-list,
+.resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/*
+ * 一條規則一列。欄寬固定比例而不是 auto：pattern 與 replacement 常常很長，
+ * 讓內容決定寬度的話每一列的欄位會對不齊，掃視不了。
+ */
+.rule-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 0.8fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+}
+
+/* 編譯不過的規則要一眼看得出來（規格 §4：標紅並說明原因） */
+.rule-row.has-error {
+  border-color: #c0564d;
+}
+
+.rule-error {
+  grid-column: 1 / -1;
+}
+
+.rule-input,
+.rule-kind {
+  min-width: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.rule-input {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.rule-input:disabled {
+  opacity: 0.45;
+}
+
+.rule-path {
+  width: 120px;
+}
+
+.rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.rule-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rule-toolbar .rule-input {
+  flex: 1 1 140px;
+}
+
+/* --------------------- 資源覆寫（SPEC-rules §3.6） --------------------- */
+
+.resource-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  flex-wrap: wrap;
+}
+
+.resource-row.is-candidate {
+  background: transparent;
+  border-style: dashed;
+}
+
+/*
+ * 縮圖給固定高度 + contain：候選圖的長寬比什麼都有，讓圖自己決定高度的話
+ * 整排會參差不齊。背景是棋盤色，透明的 logo 才看得見。
+ */
+.resource-thumb {
+  height: 28px;
+  width: 64px;
+  object-fit: contain;
+  background:
+    linear-gradient(45deg, var(--bg-raised) 25%, transparent 25%, transparent 75%, var(--bg-raised) 75%),
+    linear-gradient(45deg, var(--bg-raised) 25%, transparent 25%, transparent 75%, var(--bg-raised) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+
+.resource-path {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* `<input type="file">` 長得醜又不能改，所以包一層 label 當按鈕 */
+.file-button {
+  cursor: pointer;
+}
+
+/* --------------------- 快取裡的簡體（SPEC-rules §5.1） --------------------- */
+
+.translate-simplified {
+  margin: 8px 0 0;
+}
+
+.simplified-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.simplified-list code {
+  color: #ffb4ad;
+}
+
+.notice.is-ok {
+  color: #9fe6b5;
+}
+
+.notice.is-warn {
+  color: #ffd79a;
+}

@@ -23,6 +23,8 @@ window.LocalMonkeyTranslateTab = (function createTranslateTab() {
     query: '',
     onlyManual: false,
     onlyFailed: false,
+    /** 掃出來的簡體段（SPEC-rules §5.1）。null = 還沒掃過。 */
+    simplified: null,
   };
 
   /* -------------------------------- 狀態列 -------------------------------- */
@@ -46,6 +48,42 @@ window.LocalMonkeyTranslateTab = (function createTranslateTab() {
           ? `<span class="badge is-warn">翻不動 ${state.queue.failed} 段</span>`
           : ''
       }`;
+  }
+
+  /* ----------------------- 快取裡的簡體（SPEC-rules §5.1） ----------------------- */
+
+  /**
+   * 為什麼要這一塊：v4 的 prompt 後來才加上「禁止簡體字」，但**加之前翻的那些
+   * 還在快取裡**，而快取是永久的 —— 不掃出來重翻的話它們永遠不會自己好。
+   */
+  function simplifiedPanel() {
+    const found = state.simplified;
+    if (found === null) {
+      return '<p class="muted">還沒掃過。按「掃簡體」會檢查每一段譯文裡有沒有簡體字。</p>';
+    }
+    if (found.total === 0) {
+      return '<p class="notice is-ok">快取裡沒有簡體字。</p>';
+    }
+
+    const rows = found.entries
+      .slice(0, 50)
+      .map(
+        (entry) => `
+          <li>
+            <code>${escapeHtml(entry.chars.join(''))}</code>
+            <span class="muted">${escapeHtml(entry.source_text)}</span>
+            → ${escapeHtml(entry.translated)}
+            ${entry.origin === 'manual' ? '<span class="badge">人工</span>' : ''}
+          </li>`,
+      )
+      .join('');
+
+    return `
+      <p class="notice is-warn">
+        ${found.total} 段含簡體字${found.manual > 0 ? `（其中 ${found.manual} 段是人工覆寫）` : ''}。
+      </p>
+      <ul class="simplified-list">${rows}</ul>
+      ${found.total > 50 ? `<p class="muted">只列出前 50 段。</p>` : ''}`;
   }
 
   /* --------------------------------- 表格 --------------------------------- */
@@ -102,6 +140,7 @@ window.LocalMonkeyTranslateTab = (function createTranslateTab() {
 
   function render() {
     byId('translate-status').innerHTML = statusLine();
+    byId('translate-simplified').innerHTML = simplifiedPanel();
 
     const rows = state.onlyFailed
       ? state.failed.map((row) => failedRow(row))
@@ -214,6 +253,33 @@ window.LocalMonkeyTranslateTab = (function createTranslateTab() {
       withErrorBanner(async () => {
         const result = await api.runQueue();
         banner.show(`已推一把，佇列裡還有 ${result.queue.pending} 段。`, 'ok');
+      });
+    });
+
+    byId('translate-scan-simplified').addEventListener('click', () => {
+      withErrorBanner(async () => {
+        state.simplified = await api.listSimplified();
+        banner.show(
+          state.simplified.total === 0
+            ? '快取裡沒有簡體字。'
+            : `掃到 ${state.simplified.total} 段含簡體字。`,
+          state.simplified.total === 0 ? 'ok' : 'warn',
+        );
+        render();
+      });
+    });
+
+    byId('translate-fix-simplified').addEventListener('click', () => {
+      withErrorBanner(async () => {
+        const result = await api.retranslateSimplified(false);
+        banner.show(
+          result.queued === 0
+            ? '沒有需要重翻的段（人工覆寫的不會自動動它）。'
+            : `已把 ${result.queued} 段排進佇列重翻。`,
+          'ok',
+        );
+        state.simplified = await api.listSimplified();
+        await refresh();
       });
     });
 
