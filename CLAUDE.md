@@ -8,6 +8,7 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
 - [`docs/SPEC-dashboard.md`](docs/SPEC-dashboard.md) —— **v3：`<base>` 修正 + 儀表板**
 - [`docs/SPEC-translate.md`](docs/SPEC-translate.md) —— **v4：伺服器端翻譯層**（切段、ollama、快取、爬蟲）
 - [`docs/SPEC-rules.md`](docs/SPEC-rules.md) —— **v5：站台改造規則**（隱藏、改寫文字、資源覆寫）
+  ＋ **v6（同一份的 §8~§11）**：內容雜湊 cache busting、開發模式、`css` 規則型別
 
 這份檔案記的是「**動手改之前你會想知道的事**」。
 
@@ -41,7 +42,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1217 個測試
+npm test             # node:test，1311 個測試
 npm run test:coverage
 ```
 
@@ -107,8 +108,10 @@ HTML 的網址改寫走 `lib/html.js` 的 `rewriteDocumentUrls()`，**順序是�
 2. 翻譯回填   translate/service.js  ← 要在 1 之後：切段器算的是字元座標，
                                        之後的任何字串改動都會讓座標失效
 3. 改造規則   rules/service.js      ← 文字規則套在**翻譯後**的文字上（v5），
-                                       hide 的 CSS 插在 </head> 之前
-4. 腳本注入   injectScripts()       ← 只在頭尾加 tag，不影響前三步
+                                       hide / css 的 CSS 插在 </head> 之前
+4. cache bust lib/cache-bust.js     ← 要在 1~3 **之後**：它改的是屬性值，
+                                       放前面會讓切段器的座標全部失效（v6）
+5. 腳本注入   injectScripts()       ← 只在頭尾加 tag，不影響前四步
 ```
 
 每一層都是獨立的純函式模組（`src/lib/*`），單元測試打的是它們；
@@ -228,13 +231,14 @@ SSRF、讀 body、forward 全部省掉。
 ```
 src/rules/
   selector.js     hide 的 CSS 選擇器檢查 + 非 ASCII 跳脫
+  css-text.js     css 規則的 CSS 文字檢查（擋 </style）+ 非 ASCII 跳脫
   scope.js        文字規則的範圍限定（祖先鏈比對，CSS 選擇器的子集）
   user-regex.js   使用者正則的編譯 + 嵌套量詞攔截
   literal.js      字面取代（空白寬鬆、大小寫風格跟著原文）
   compile.js      DB 的列 → 可執行的規則 / 一條錯誤訊息
   text.js         單段套規則 + 跨段的時間預算
   apply.js        整份 HTML 的座標回填
-  hide-css.js     hide → CSS
+  hide-css.js     hide + css → 一份 CSS（順序照 order_index，後者勝）
   style-tag.js    注入 <style>
   image-refs.js   候選圖（img src / srcset / CSS url()）
   service.js      門面：代理與控制台叫的都是這支
@@ -308,10 +312,11 @@ sites            + translate_enabled / translate_lang / translate_model / glossa
 ## 資料模型（v5 新增）
 
 ```
-site_rules          id / site_id / kind('hide'|'text-replace'|'text-rewrite')
+site_rules          id / site_id / kind('hide'|'css'|'text-replace'|'text-rewrite')
                     pattern / replacement / scope / note / enabled / order_index
 resource_overrides  id / site_id / path / sha256 → assets / content_type / enabled
                     UNIQUE(site_id, path)
+sites               + dev_mode（v6）
 ```
 
 - **`scope` 不在規格 §2 的欄位表裡** —— 它是 §3.2 追加的：卡片標題那條規則
@@ -322,6 +327,13 @@ resource_overrides  id / site_id / path / sha256 → assets / content_type / ena
   所以 DB 層不把它折成 null。
 - 規則**每個請求重讀 + 重編譯**：改了立刻生效，而且 `RegExp` 的 `lastIndex`
   不會跨請求活著。
+- **`kind='css'` 的 `pattern` 存的是一整段 CSS 文字，不是選擇器**（v6）。
+  所以它可以含換行、上限是 4000 字（其他型別 500），而且驗證層**不**擋
+  `</style>`（規格 §4 要壞規則存得起來並標紅）—— 真正的防線在 `rules/css-text.js`。
+- **`sites.dev_mode` 是「反覆調規則時打開、調完關掉」的開關，不是常駐狀態**。
+  打開時所有非 HTML 回應改成 `no-cache`（保留 ETag）。
+- **v6 的 migration 重建了整張 `site_rules`**（`kind` 的 CHECK 寫在建表語句裡，
+  SQLite 不能 ALTER）。順序照地雷 11：rename → 建新表 → 複製 → 最後才 DROP。
 
 ---
 
@@ -588,6 +600,49 @@ resource_overrides  id / site_id / path / sha256 → assets / content_type / ena
     `scope` 的比對是另一回事：那是祖先鏈上的子集比對，看不懂的語法一律拒絕
     （猜錯的後果是「規則悄悄套到全站」，比沒生效嚴重得多）。
 
+### v6（cache busting / `css` 規則）踩到的
+
+48. **⛔ 地雷 46 的真正解法不是「叫使用者按 Ctrl+F5」。** 覆寫的回應是
+    `no-store` 沒錯，但那只對「瀏覽器真的來問我們」的時候有用 —— 而 templatemo
+    的圖片帶 `max-age=604800`，瀏覽器**七天內不會來問**。
+    正解是讓網址本身變成內容定址的：`?v=<sha256 前 8 碼>`（`lib/cache-bust.js`）。
+    換圖 → sha 變 → 網址變 → 舊快取那一筆再也不會被用到。
+    **判準**：凡是「我們這邊換了東西，但瀏覽器手上那份是舊的」的問題，
+    能改網址就改網址，不要去改快取指示 —— 後者治不了「它根本沒來問」。
+49. **`lib/html.js` 不改寫 `url()` 裡的網址。** 它只動
+    `src`/`href`/`action`/`poster`/`formaction` 這幾個屬性，所以
+    `style="background:url(/images/logo.png)"` 在送出去的 HTML 裡是**沒有
+    `/p/<site>/` 前綴的根絕對路徑**（由根路徑 fallback 接住）。
+    任何「掃 HTML 裡的資源引用」的新程式碼都要同時認這兩種形狀 ——
+    只認代理路徑的話，`background-image` 的 logo 會整組漏掉。
+50. **同一份 HTML 裡有兩種 entity 規則。** 屬性值（`src="…"`）會被解碼，
+    `<style>` 裡的 raw text **不會**。所以產生網址時分隔符要用裸的 `&`
+    （`&amp;` 在 CSS 那邊會變成真的字面字元 → 404，而且只有 background-image
+    會壞）。寫任何「同時改屬性與 CSS」的函式之前先想這件事。
+51. **⛔ `escapeCssNonAscii` 不能直接拿去跳脫「一整段 CSS」。** 它擋的是
+    `[^\x20-\x7e]`，而那個範圍含 `\n` 與 `\t` —— 多行 CSS 會被寫成
+    `.a {\00000a  margin: 0;}`，整份報廢，而且**不會報錯**。
+    `rules/css-text.js` 的 `escapeCssText` 保留 `\t` / `\r` / `\n`。
+52. **`<style>` 的唯一出口是 `</style`，所以 `css` 規則只要擋這一個就夠。**
+    `{` `}` `;` `\` 全部要放行（CSS 沒有它們就不是 CSS），而 `<\/style>` 在 HTML
+    分詞器眼裡不是結束標籤。擋的時候大小寫與空白的變形都要涵蓋
+    （`</STYLE>`、`</style   >`、`</style/`）。
+53. **⛔ `applyPreset` 的「同一條規則」不能用 pattern 認 `css` 規則。**
+    `css` 的 pattern **就是被編輯的內容本身** —— 把 logo 的 font-size 從 46px
+    調成 54px 再重跑 seed，結果是**新增一條**而不是更新：兩條同時注入，誰贏看
+    `order_index`，舊的那條還活著。`css` 的身分改用 `note`。
+    （一般原則：拿「會被編輯的內容」當身分一定會長出重複。）
+54. **⛔ 「`display:none` 會留下容器的高度與 margin」是個很好用但常常錯的假設。**
+    templatemo 的那片空白實測**不是**那樣來的：`.tm-dl-grey` 這些容器的子元素
+    都是 float，它們本來就 0 高。真正的來源是兩個 `min-height: 300px` 的空廣告位。
+    **量，不要推論**：`[...document.querySelectorAll('body *')]` 濾出
+    「高度 ≥ 40px 但 textContent 是空的」就直接指出兇手了。
+55. **翻譯漏了某幾段時，先確認它們有沒有進過佇列。** `Added:` / `Views:` /
+    `Downloads:` 永遠是英文，而同一行的日期翻好了 —— 看起來像模型漏翻，實際上
+    是 `translate/rules.js` 的 URL 判斷把 `Added:` 當成 URL scheme，那三段
+    **從來沒被收進去**。查的順序是：`isTranslatable()` → `translate_queue`
+    → `translations`，不是倒過來。
+
 ---
 
 ## 改動時的注意事項
@@ -673,6 +728,10 @@ resource_overrides  id / site_id / path / sha256 → assets / content_type / ena
 - **壞規則不丟例外，帶著 `error` 回去。** 控制台要把那一列標紅並說明原因，
   而代理要照常回應 —— 一條規則寫壞不該讓整個網站打不開。所以 API 也**收**
   編譯不過的規則（退回去的話使用者只會看到一個 400，沒有上下文可以改）。
+- **資源覆寫的網址帶內容雜湊（`?v=`），而覆寫本身的快取政策跟著它走**（v6）：
+  `?v=` 對得上就回 `immutable`（內容定址，網址只會對應到這一份內容），
+  沒帶或帶錯就回 `no-store`。`dev_mode` 打開時一律 `no-cache`。
+  **只有有覆寫的路徑會被加上 `?v=`** —— 其他資源一個都不碰，不然等於把整站快取關掉。
 - **資源覆寫上傳的 content-type 以「聞出來的」為準**（magic bytes），不是宣告的
   —— 宣告是使用者可控的字串。**SVG 一律拒絕**：它可以內嵌 `<script>`，而那張圖
   是從我們自己的 origin 送出去的（同 `safeAssetContentType` 與 favicon 的理由）。
