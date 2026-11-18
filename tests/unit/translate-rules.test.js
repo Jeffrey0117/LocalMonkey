@@ -146,3 +146,30 @@ test('非字串輸入一律 false', () => {
     assert.equal(isTranslatable(input), false);
   }
 });
+
+/**
+ * ⛔ 真實事故（2026-11-18）：詳情頁的 `Added:` / `Views:` / `Downloads:` 三個標籤
+ * **永遠不會進翻譯快取**，日期本身卻翻好了 —— 看起來像「模型漏翻了」，實際上
+ * 這三段從來沒被收進佇列。
+ *
+ * 根因是「整段看起來像網址」那條判斷：`^[a-z][a-z0-9+.-]*:` 把 **`Added:` 認成
+ * 一個 URL scheme**。真的 scheme 後面一定還有東西（`http://x`、`mailto:a@b`），
+ * 所以要求冒號後面至少有一個非空白字元。
+ */
+test('⛔ `Added:` / `Views:` 這種「字 + 冒號」的標籤要翻（不是 URL scheme）', () => {
+  for (const text of ['Added:', 'Views:', 'Downloads:', 'Tags:', 'Note:']) {
+    assert.equal(isTranslatable(text), true, text);
+  }
+});
+
+test('⛔ 但真的 scheme 還是不翻（上面那條不准放寬成「有冒號就翻」）', () => {
+  for (const text of [
+    'https://templatemo.com/page/3',
+    'mailto:info@example.com',
+    'tel:+886212345678',
+    'data:image/png;base64,iVBOR',
+    'javascript:void(0)',
+  ]) {
+    assert.equal(isTranslatable(text), false, text);
+  }
+});

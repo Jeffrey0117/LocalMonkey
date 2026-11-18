@@ -24,14 +24,27 @@ const PRESETS = Object.freeze({
  * 卡片標題就從 `.thumbnail_270 h2` 改成多涵蓋詳情頁的 `.tm_silver_360 h2`）。
  * 把 scope 算進 key 的話，重跑 preset 會留下一條舊的、範圍錯的規則繼續生效 ——
  * 而使用者看到的症狀是「改了，但有些頁面沒變」。
+ *
+ * ⛔ **`css` 規則用 `note` 當 key，不是 pattern**（2026-11-18 實際踩到）：
+ * `css` 的 pattern **就是被編輯的內容本身**（一整段 CSS），拿它當身分的話
+ * 「把 logo 的 font-size 從 46px 改成 54px」會被當成一條**新規則**，重跑 preset
+ * 之後兩條同時注入 —— 舊的那條還活著，而且誰贏看 order_index。
+ * `note` 才是那條規則的穩定標籤。
  */
 function keyOf(rule) {
-  return JSON.stringify([rule.kind, rule.pattern]);
+  return JSON.stringify([rule.kind, rule.kind === 'css' ? rule.note ?? rule.pattern : rule.pattern]);
 }
 
-/** 套用 preset ＝以 preset 為準：replacement / scope / note / enabled 都會被蓋掉 */
+/**
+ * 套用 preset ＝以 preset 為準：pattern / replacement / scope / note / enabled
+ * 都會被蓋掉。
+ *
+ * `pattern` 也要比（而且也要寫回去）—— 對 `hide` / `text-*` 它一定相等
+ * （它就是 key 的一部分），但 `css` 的 pattern 本來就會變。
+ */
 function differs(found, rule) {
   return (
+    found.pattern !== rule.pattern ||
     (found.replacement ?? '') !== (rule.replacement ?? '') ||
     (found.scope ?? null) !== (rule.scope ?? null) ||
     (found.note ?? '') !== (rule.note ?? '') ||
@@ -59,6 +72,7 @@ function applyPreset(store, siteId, rules) {
       if (!differs(found, rule)) return counts;
 
       store.siteRules.update(found.id, {
+        pattern: rule.pattern,
         replacement: rule.replacement ?? '',
         scope: rule.scope ?? null,
         note: rule.note ?? null,

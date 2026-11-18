@@ -168,6 +168,36 @@ test('preset 是冪等的：跑第二次不會長出第二份', async (t) => {
   assert.equal(app.store.siteRules.listBySite('templatemo-com').length, PRESETS['templatemo-com'].length);
 });
 
+/**
+ * ⛔ 2026-11-18 真的踩到：`css` 規則的 pattern **就是被編輯的內容本身**。
+ * 把 logo 的 `font-size` 從 46px 調成 54px 再重跑 seed，結果不是「更新一條」
+ * 而是「新增一條」—— 兩條同時注入，誰贏看 order_index，而舊的那條還活著。
+ * 所以 `css` 的身分是 `note`，不是 pattern。
+ */
+test('⛔ 改了 css 規則的內容再跑一次 preset：是更新不是新增', async (t) => {
+  const { app } = await scenario(t);
+
+  const original = PRESETS['templatemo-com'];
+  const before = app.store.siteRules.listBySite('templatemo-com').length;
+
+  const edited = original.map((rule) =>
+    rule.kind === 'css' ? { ...rule, pattern: `${rule.pattern}\n.extra { color: red; }` } : rule,
+  );
+  const cssCount = original.filter((rule) => rule.kind === 'css').length;
+  assert.ok(cssCount > 0, 'preset 裡要有 css 規則這條測試才有意義');
+
+  const applied = applyPreset(app.store, 'templatemo-com', edited);
+  const after = app.store.siteRules.listBySite('templatemo-com');
+
+  assert.deepEqual(applied, { created: 0, updated: cssCount });
+  assert.equal(after.length, before, '規則數量不准變多');
+  assert.equal(
+    after.filter((rule) => rule.pattern.includes('.extra { color: red; }')).length,
+    cssCount,
+    '新的 CSS 內容要真的寫回去',
+  );
+});
+
 /* ------------------------------- §3.1 首頁 header ------------------------------- */
 
 test('§3.1 標語改成「超級齊全的 HTML CSS 網站模板」（還沒翻到的狀態）', async (t) => {
@@ -455,4 +485,158 @@ test('規則命中數回在 x-lm-rules header 上', async (t) => {
     new RegExp(`hide=${countOf('hide')} css=${countOf('css')} text=\\d+`),
     response.headers.get('x-lm-rules'),
   );
+});
+
+/* ======================= 第二輪：§10 的四條新規則 ======================= */
+
+/* ------------------------- §10.1 logo 換成 templatee ------------------------- */
+
+test('§10.1 原本的 logo PNG 被藏起來，字樣由 CSS 畫出來', async (t) => {
+  const { get } = await scenario(t);
+  const { text } = await get('/');
+
+  const css = injectedCss(text);
+
+  assert.match(css, /\.templatemo-logo img \{ display: none !important; \}/);
+  assert.match(css, /\.templatemo-logo > a::before \{ content: "templat"; color: #FFFFFF; \}/);
+  assert.match(css, /\.templatemo-logo > a::after {2}\{ content: "ee"; color: #CCFF00; \}/);
+
+  // img 的 tag 還在（我們藏的是視覺不是結構）
+  assert.match(text, /<img src="\/p\/templatemo-com\/images\/templatemo-logo-new\.png"/);
+});
+
+/**
+ * ⛔ 這些數字不是估的，是量出來的（見 presets/templatemo-com.js 的註解）：
+ * `#CCFF00` 是從原 logo PNG 掃出來的 `mo` 的顏色，280×60 是圖的尺寸，
+ * 54px 是「Raleway 700 的 templatee 寬度剛好等於原 logo ink 寬度 261px」。
+ *
+ * 伺服器端只驗得到「這些值有進 CSS」。**位置與大小是在真瀏覽器上量的**
+ * （`.templatemo-logo > a` 的矩形 = 280×60 @ (353, 40)，跟原本那張 `<img>`
+ * 完全重疊）—— CSS 寫對了但看起來歪掉不算做完。
+ */
+test('§10.1 字樣的尺寸與顏色是從原圖量出來的那組值', async (t) => {
+  const { get } = await scenario(t);
+  const css = injectedCss((await get('/')).text);
+
+  assert.match(css, /width: 280px;/);
+  assert.match(css, /height: 60px;/);
+  assert.match(css, /font-size: 54px;/);
+  assert.match(css, /font-weight: 700;/);
+  assert.match(css, /font-family: 'Raleway'/);
+});
+
+/* --------------------------- §10.2 收掉多餘的空白 --------------------------- */
+
+/**
+ * ⛔ 一開始的假設（「display:none 只藏元素，容器的高度與 margin 還在」）量完
+ * 是**錯的**：`.tm-dl-grey` 這些容器的子元素都是 float，它們本來就 0 高。
+ *
+ * 真正的空白是兩個從來沒被填滿的廣告位 —— `.tm_banner` 自己帶
+ * `min-height: 300px`，而廣告腳本是絕對網址、不經過代理也載不起來。
+ * 首頁與詳情頁各兩個 ＝ 600px。
+ *
+ * 實測（1920×911 的真瀏覽器）：首頁 hero 到第一排卡片 380px → 80px、
+ * 整頁 3733px → 3073px；詳情頁 5029px → 4395px。
+ */
+test('§10.2 空的廣告位與孤兒間隔條被收掉', async (t) => {
+  const { get } = await scenario(t);
+  const css = injectedCss((await get('/')).text);
+
+  assert.match(css, /\.tm_banner \{ display: none !important; \}/);
+  assert.match(
+    css,
+    /\.sharethis-inline-share-buttons \+ \.templatemo_clear \{ display: none !important; \}/,
+  );
+});
+
+test('§10.2 的規則是 css 型別（選擇器之外還要帶註解說明為什麼）', async (t) => {
+  const { app } = await scenario(t);
+  const rule = app.store.siteRules
+    .listBySite('templatemo-com')
+    .find((entry) => entry.pattern.includes('.tm_banner'));
+
+  assert.equal(rule.kind, 'css');
+  assert.match(rule.note, /廣告位/);
+});
+
+/* ---------------------- §10.3 詳情頁的英文樣板 + 兩條手動 ---------------------- */
+
+/**
+ * 「Lantern River Template is 100% free to download for anyone. You are allowed
+ * to…」—— 每個模板一句、名字內嵌，600+ 個模板就是 600+ 段。
+ *
+ * ⛔ 選擇器用 `:has(> a[href*="templatemo.com/tm-"])` 而不是 `:nth-of-type(2)`：
+ * nth-of-type 靠「Tags 那段一定在」，那是假設。實測 tm-628 與 tm-634 的
+ * `#tm-dl-box` 裡只有這個 `<p>` 有直接連回自己的連結（breadcrumb 那個是 h2）。
+ * **真瀏覽器驗過**：`querySelector` 命中的就是那一段，而 Tags 與 Added 兩行還在。
+ */
+test('§10.3 詳情頁那段英文樣板文被藏起來', async (t) => {
+  const { get } = await scenario(t);
+  const { text } = await get('/tm-634-lantern-river');
+  const css = injectedCss(text);
+
+  assert.match(css, /#tm-dl-box p:has\(> a\[href\*="templatemo\.com\/tm-"\]\) \{ display: none/);
+
+  // 那段文字本身還在 HTML 裡（CSS 藏的是視覺），而且絕對網址沒被改寫掉 ——
+  // 選擇器就是靠它認人的
+  assert.match(text, /href="https:\/\/templatemo\.com\/tm-634-lantern-river">Lantern River Template<\/a> is 100% free/);
+});
+
+test('§10.3 使用者自己加的兩條 hide 也在 preset 裡（重跑 seed 不會不見）', async (t) => {
+  const { app, get } = await scenario(t);
+  const css = injectedCss((await get('/tm-634-lantern-river')).text);
+
+  assert.match(css, /\.sharethis-inline-share-buttons \{ display: none !important; \}/);
+  assert.match(css, /\.tm-dl-grey-premium \{ display: none !important; \}/);
+
+  const patterns = app.store.siteRules.listBySite('templatemo-com').map((rule) => rule.pattern);
+  assert.ok(patterns.includes('.sharethis-inline-share-buttons'));
+  assert.ok(patterns.includes('.tm-dl-grey-premium'));
+});
+
+/* ------------------ §10.4 Added / Views / Downloads 要翻譯 ------------------ */
+
+/**
+ * ⛔ 真實事故：這三個標籤**從來沒進過翻譯佇列**，所以永遠是英文 —— 而同一行的
+ * 日期翻好了，症狀長得像「模型漏翻了這幾個字」。根因是切段規則的
+ * 「整段看起來是網址」判斷把 `Added:` 認成一個 URL scheme
+ * （`^[a-z][a-z0-9+.-]*:`）。修在 `translate/rules.js`，這條是端到端的回歸保護。
+ */
+test('⛔ §10.4 Added: / Views: / Downloads: 會進翻譯佇列（以前整組被當成 URL 濾掉）', async (t) => {
+  const { app, get } = await scenario(t, { translate: true });
+
+  await get('/tm-634-lantern-river');
+  // 佇列是射後不理的，而假 client 一進去就「翻完」了 —— 所以看的是終點
+  // （translations）而不是佇列當下的內容，不然會變成跟背景工作賽跑的爛測試
+  await app.translation.queue.idle();
+
+  for (const label of ['Added:', 'Views:', 'Downloads:', 'Tags:']) {
+    const row = app.store.translations.get(translationHash(label, LANG, MODEL));
+    assert.ok(row, `${label} 應該被收進翻譯管線（以前它被當成 URL scheme 濾掉）`);
+  }
+});
+
+test('§10.4 翻好之後頁面上就是中文的標籤', async (t) => {
+  const { app, get } = await scenario(t, { translate: true });
+
+  for (const [source, translated] of [
+    ['Added:', '新增日期：'],
+    ['Views:', '觀看次數：'],
+    ['Downloads:', '下載：'],
+  ]) {
+    app.store.translations.put({
+      hash: translationHash(source, LANG, MODEL),
+      source_text: source,
+      target_lang: LANG,
+      model: MODEL,
+      translated,
+      origin: 'machine',
+    });
+  }
+
+  const { text } = await get('/tm-634-lantern-river');
+
+  assert.match(text, /<strong>新增日期：<\/strong>/);
+  assert.match(text, /<strong>觀看次數：<\/strong>/);
+  assert.match(text, /<strong>下載：<\/strong>/);
 });

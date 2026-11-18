@@ -23,7 +23,16 @@ const MAX_LENGTH = 1200;
  */
 const CJK = /[\u3040-\u30ff\u3100-\u312f\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
 
-const URL_LIKE = /^(?:[a-z][a-z0-9+.-]*:|\/\/|www\.)/i;
+/**
+ * 整段看起來是網址。
+ *
+ * ⛔ scheme 後面**一定要還有東西**（`\S`）。真實事故（2026-11-18）：第一版寫成
+ * `[a-z][a-z0-9+.-]*:`，於是詳情頁的 `Added:` / `Views:` / `Downloads:` / `Tags:`
+ * 被認成 URL scheme，**永遠不會進翻譯佇列** —— 而同一行的日期翻好了，所以症狀
+ * 長得像「模型漏翻了這幾個字」，完全猜不到是切段規則濾掉的。
+ * 真的 scheme 後面必有內容（`http://x`、`mailto:a@b`、`data:image/png`）。
+ */
+const URL_LIKE = /^(?:[a-z][a-z0-9+.-]*:\S|\/\/|www\.)/i;
 const PATH_LIKE = /^\/[^\s]*$/;
 const EMAIL_LIKE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
