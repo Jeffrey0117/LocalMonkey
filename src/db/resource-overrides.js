@@ -14,6 +14,7 @@
 
 const { NotFoundError } = require('./errors.js');
 const { newId, nowIso } = require('../lib/ids.js');
+const { shortVersion } = require('../lib/cache-bust.js');
 
 function toFlag(value) {
   return value === true || value === 1 ? 1 : 0;
@@ -95,6 +96,24 @@ function putResourceOverride(db, siteId, input) {
   return findResourceOverrideAny(db, siteId, input.path);
 }
 
+/**
+ * 這個站「被覆寫的路徑 → 版本號」（`lib/cache-bust.js` 的 `?v=`）。
+ *
+ * 代理對每一份 HTML 問一次，所以只拿兩個欄位、走同一個 index。
+ * 停用的覆寫不列 —— 它的那條路徑回去走上游，加版本號只會讓快取白白失效。
+ *
+ * ⛔ 空的 Map 是常見狀況（大部分站沒有任何覆寫），呼叫端要能零成本跳過。
+ */
+function resourceVersions(db, siteId) {
+  return new Map(
+    db
+      .prepare('SELECT path, sha256 FROM resource_overrides WHERE site_id = ? AND enabled = 1')
+      .all(siteId)
+      .map((row) => [row.path, shortVersion(row.sha256)])
+      .filter(([, version]) => version !== null),
+  );
+}
+
 /** 含停用的（put 之後要把那一列回給 UI，即使它是停用狀態） */
 function findResourceOverrideAny(db, siteId, path) {
   return mapRow(
@@ -124,6 +143,7 @@ function removeResourceOverride(db, id) {
 
 module.exports = {
   putResourceOverride,
+  resourceVersions,
   getResourceOverride,
   listResourceOverrides,
   findResourceOverride,

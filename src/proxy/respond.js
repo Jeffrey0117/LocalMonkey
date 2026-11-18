@@ -4,7 +4,8 @@ const { filterResponseHeaders } = require('../lib/headers.js');
 const { rewriteSetCookie } = require('../lib/cookies.js');
 const { rewriteLocation } = require('../lib/location.js');
 const { rewriteDocumentUrls, injectScripts } = require('../lib/html.js');
-const { withHtmlCachePolicy } = require('../lib/cache-policy.js');
+const { withHtmlCachePolicy, withDevModeCachePolicy } = require('../lib/cache-policy.js');
+const { bustCacheReferences } = require('../lib/cache-bust.js');
 const { planInjection } = require('../lib/injection.js');
 const { SITE_COOKIE_NAME } = require('../lib/site-resolve.js');
 
@@ -43,12 +44,15 @@ function selectScripts(store, site, pathname) {
  *   3. 改造規則（v5）—— 文字規則套在**翻譯後**的文字上（SPEC-rules §1），
  *      所以 `templatemo → templatee` 不會被翻譯快取汙染；hide 的 CSS 插在
  *      `</head>` 之前
- *   4. 腳本注入 —— 只在頭尾加 tag，不影響前面三步
+ *   4. 資源覆寫的 cache busting（v6）—— 要在 1~3 **之後**：它改的是屬性值，
+ *      而切段器算的是字元座標。放前面的話座標全部失效（版面爆開，而 curl
+ *      看起來一切正常）
+ *   5. 腳本注入 —— 只在頭尾加 tag，不影響前面四步
  *
  * 翻譯層與規則層都是同步的、只查 SQLite；壞掉就回原字串
  * （見 translate/service.js 與 rules/service.js）。
  */
-function transformHtml(buffer, { site, scripts, translate, rules, contentType, onStats }) {
+function transformHtml(buffer, { site, scripts, translate, rules, versions, contentType, onStats }) {
   const source = buffer.toString('latin1');
   const rewritten = rewriteDocumentUrls(source, {
     siteId: site.id,
@@ -63,17 +67,28 @@ function transformHtml(buffer, { site, scripts, translate, rules, contentType, o
     ? rules(translated, { site, contentType, onStats: onStats?.rules })
     : translated;
 
-  return Buffer.from(injectScripts(ruled, scripts), 'latin1');
+  const busted = bustCacheReferences(ruled, { siteId: site.id, versions });
+
+  return Buffer.from(injectScripts(busted, scripts), 'latin1');
 }
 
 /**
  * HTML 的 header 要多做一件事：拿掉上游的快取指示、改成 no-store
  * （理由在 lib/cache-policy.js —— 我們回的 HTML 是改造過的，不是上游那份）。
  * 非 HTML 原樣轉述，那是效能的來源。
+ *
+ * **開發模式**（`sites.dev_mode`，SPEC-rules §8.2）例外：非 HTML 也改成
+ * `no-cache`（保留 ETag → 304 不傳 body）。那是「只被外部 CSS 檔的 url()
+ * 引用的資源拿不到 `?v=`」這個邊界的解法。
  */
+function cachePolicyFor(pairs, { html, devMode }) {
+  if (html) return withHtmlCachePolicy(pairs);
+  return devMode ? withDevModeCachePolicy(pairs) : pairs;
+}
+
 function copyHeaders(res, response, site, { html }) {
   const filtered = filterResponseHeaders(response.headers);
-  const pairs = html ? withHtmlCachePolicy(filtered) : filtered;
+  const pairs = cachePolicyFor(filtered, { html, devMode: site.dev_mode === true });
 
   for (const [name, value] of pairs) {
     res.setHeader(name, name === 'location' ? rewriteLocation(value, site) : value);
@@ -140,6 +155,8 @@ function sendProxiedResponse(res, { site, response, buffer, pathWithQuery, store
     scripts,
     translate,
     rules,
+    // 被覆寫的路徑 → 版本號。大部分站是空的 Map，bustCacheReferences 會直接跳過。
+    versions: store.resourceOverrides.versions(site.id),
     contentType,
     onStats: {
       translate: (value) => {

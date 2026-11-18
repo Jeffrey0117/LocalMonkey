@@ -24,12 +24,16 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
   ];
 
   /**
-   * ⛔ 換了圖之後要講這句：代理對**非 HTML** 的回應是照抄上游的快取指示的
-   * （那是效能的來源），所以瀏覽器可能早就把舊的那張收進快取了 —— templatemo
-   * 給的是 `max-age=86400`，整整一天。覆寫本身回 `no-store`，但那只對
-   * 「瀏覽器真的來問我們」的時候有用。這是伺服器端完全看不到的症狀。
+   * 換了圖之後要講的那句話。
+   *
+   * 以前這裡寫的是「按 Ctrl+F5」—— 現在不用了：HTML 裡的引用點會帶上內容雜湊
+   * （`?v=<sha 前 8 碼>`，SPEC-rules §8.1），換圖 → 網址變 → 瀏覽器根本不會碰到
+   * 舊快取那一筆。還是留一句說明是因為**有一個碰不到的邊界**：只被外部 CSS 檔的
+   * `background-image: url()` 引用的圖拿不到版本號（那個網址寫在 CSS 檔裡，而
+   * CSS 檔自己也被快取著）→ 那種要開「開發模式」。
    */
-  const CACHE_HINT = '如果畫面上還是舊的那張，按 Ctrl+F5（瀏覽器可能還留著上游給的快取）。';
+  const CACHE_HINT =
+    '網址會帶上內容雜湊，所以不用按 Ctrl+F5。如果這張圖是被外部 CSS 檔的 background-image 引用的，打開上面的「開發模式」才看得到。';
 
   const PLACEHOLDERS = {
     hide: { pattern: 'CSS 選擇器，例 .tm-menu', replacement: '（隱藏不需要替換字）' },
@@ -40,6 +44,11 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
   const state = {
     /** siteId → 展開了沒 */
     open: new Set(),
+    /**
+     * 改了站本身的欄位（dev_mode）之後要重新抓一次站台清單。
+     * `onChanged` 只是重畫，會拿**舊的** site 物件 —— 開關按下去會彈回來。
+     */
+    onSiteChanged: () => {},
     /** siteId → 規則清單（含編譯錯誤） */
     rules: new Map(),
     /** siteId → 資源覆寫清單 */
@@ -194,6 +203,34 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
       </p>`;
   }
 
+  /**
+   * 開發模式的開關（SPEC-rules §8.2）。
+   *
+   * ⛔ 為什麼需要它，而內容雜湊不夠：`?v=` 只救得了「HTML 裡有引用那條路徑」的
+   * 資源。被**外部 CSS 檔**的 `background-image: url()` 引用的圖拿不到版本號 ——
+   * 那個網址寫在 CSS 檔裡，而 CSS 檔自己也被瀏覽器快取著。
+   *
+   * 文案要把代價講清楚（「會慢一點」），不然使用者會一直開著然後抱怨代理很慢。
+   */
+  function devModeRow(site) {
+    return `
+      <div class="rule-toolbar dev-mode-row">
+        <label class="switch">
+          <input type="checkbox" data-action="dev-mode" ${site.dev_mode ? 'checked' : ''} />
+          <span>開發模式</span>
+        </label>
+        <span class="muted">
+          打開之後這個站的所有資源都會「每次先問過」（no-cache，但保留 ETag）。
+          會慢一點，但不管改什麼都立即生效 —— 反覆調規則時打開，調完記得關掉。
+          ${
+            site.dev_mode
+              ? '<strong>現在是開著的。</strong>'
+              : '平常關著：圖片與 CSS 沿用上游的快取，那是代理速度的來源。'
+          }
+        </span>
+      </div>`;
+  }
+
   /** 展開後的那一大塊。回字串，由 sites-tab 塞進它自己的 row。 */
   function panel(site) {
     if (!state.open.has(site.id)) return '';
@@ -208,6 +245,8 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
           <strong>改造規則</strong>
           <span class="muted">依序套用；文字規則作用在翻譯後的文字上，而且只動文字段（不碰 href / src / class）</span>
         </div>
+
+        ${devModeRow(site)}
 
         <div class="rule-list">
           ${rules.length === 0 ? '<p class="placeholder">還沒有規則。</p>' : rules.map((rule) => ruleRow(site.id, rule)).join('')}
@@ -341,10 +380,15 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
 
   /**
    * @param {HTMLElement} container
-   * @param {{ siteOf: (element: Element) => object|null, onChanged: () => void }} hooks
+   * @param {{
+   *   siteOf: (element: Element) => object|null,
+   *   onChanged: () => void,
+   *   onSiteChanged?: () => Promise<void>|void,
+   * }} hooks
    */
-  function init(container, { siteOf, onChanged }) {
+  function init(container, { siteOf, onChanged, onSiteChanged }) {
     state.onChanged = onChanged;
+    state.onSiteChanged = onSiteChanged ?? onChanged;
 
     const withBanner = async (action) => {
       try {
@@ -353,6 +397,22 @@ window.LocalMonkeySiteRules = (function createSiteRules() {
         banner.error(error);
       }
     };
+
+    delegate(container, '[data-action="dev-mode"]', 'change', (event, input) => {
+      const site = siteOf(input);
+      if (!site) return;
+
+      withBanner(async () => {
+        await api.updateSite(site.id, { dev_mode: input.checked });
+        banner.show(
+          input.checked
+            ? `${site.id} 的開發模式已打開：所有資源每次都會重新確認，改什麼都立即生效（會慢一點）。`
+            : `${site.id} 的開發模式已關閉：圖片與 CSS 回去沿用上游的快取。`,
+          'ok',
+        );
+        await state.onSiteChanged();
+      });
+    });
 
     delegate(container, '[data-action="rules-toggle-panel"]', 'click', (event, button) => {
       const site = siteOf(button);

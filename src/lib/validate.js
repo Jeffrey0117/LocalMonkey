@@ -276,6 +276,9 @@ function validateSiteUpdate(input) {
   if ('translate_model' in input) patch.translate_model = checkModelName(input.translate_model, errors);
   if ('glossary' in input) patch.glossary = checkGlossary(input.glossary, errors);
 
+  // v6：開發模式（SPEC-rules §8.2）
+  if ('dev_mode' in input) patch.dev_mode = checkEnabled(input.dev_mode, errors, 'dev_mode');
+
   if (Object.keys(patch).length === 0 && errors.length === 0) {
     errors.push({ field: 'body', message: '沒有任何要更新的欄位' });
   }

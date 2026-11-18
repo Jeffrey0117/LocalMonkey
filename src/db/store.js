@@ -91,6 +91,7 @@ function createStore(db) {
       get: (id) => resourceOverrides.getResourceOverride(db, id),
       listBySite: (siteId) => resourceOverrides.listResourceOverrides(db, siteId),
       find: (siteId, path) => resourceOverrides.findResourceOverride(db, siteId, path),
+      versions: (siteId) => resourceOverrides.resourceVersions(db, siteId),
       update: (id, patch) => resourceOverrides.updateResourceOverride(db, id, patch),
       remove: (id) => resourceOverrides.removeResourceOverride(db, id),
     },

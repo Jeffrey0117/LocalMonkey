@@ -19,9 +19,14 @@ function columnsOf(db, table) {
   return db.pragma(`table_info(${table})`).map((column) => column.name);
 }
 
-test('schema 版本是 5', () => {
-  assert.equal(SCHEMA_VERSION, 5);
-  assert.equal(fresh().pragma('user_version', { simple: true }), 5);
+/**
+ * ⛔ 這條故意釘**當下**的版本號（而不是跟著 SCHEMA_VERSION 浮動）：加 migration
+ * 的時候要被迫回來看一眼，確認自己是「加新版本」而不是「改舊的那一版」。
+ * v6 的斷言在 migration-v6.test.js。
+ */
+test('schema 版本是 6', () => {
+  assert.equal(SCHEMA_VERSION, 6);
+  assert.equal(fresh().pragma('user_version', { simple: true }), 6);
 });
 
 test('site_rules 的欄位齊全（含規格 §3.2 後來追加的 scope）', () => {
@@ -131,14 +136,14 @@ test('⛔ 覆寫不能指向不存在的 asset（外鍵）', () => {
   );
 });
 
-test('重複跑 migrate 不會壞（已經是 5 就什麼都不做）', () => {
+test('重複跑 migrate 不會壞（已經是最新版就什麼都不做）', () => {
   const db = fresh();
   db.prepare(
     `INSERT INTO sites (id, name, target_origin, enabled, auto_created, created_at, updated_at)
      VALUES ('s', 's', 'https://example.test', 1, 0, 'now', 'now')`,
   ).run();
 
-  assert.equal(migrate(db), 5);
+  assert.equal(migrate(db), SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sites').get().n, 1);
 });
 
@@ -162,7 +167,7 @@ test('v4 的資料庫升上來之後，既有資料還在', () => {
      VALUES ('h', 'Hello', 'zh-TW', 'm', '你好', 'manual', 'now', 'now')`,
   ).run();
 
-  assert.equal(migrate(db), 5);
+  assert.equal(migrate(db), SCHEMA_VERSION);
   assert.equal(db.prepare('SELECT name FROM sites WHERE id = ?').get('old').name, 'old site');
   assert.equal(db.prepare('SELECT translated FROM translations').get().translated, '你好');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM site_rules').get().n, 0);

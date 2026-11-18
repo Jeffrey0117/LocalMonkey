@@ -281,6 +281,52 @@ CREATE INDEX idx_site_rules_site ON site_rules (site_id, order_index, id);
 CREATE INDEX idx_resource_overrides_site ON resource_overrides (site_id, path);
 `;
 
+/**
+ * v6：`css` 規則型別（SPEC-rules §9）＋ per-site 開發模式（§8.2）。
+ *
+ * ⛔ `site_rules.kind` 的 CHECK 是寫在建表語句裡的，SQLite 不能 ALTER 掉它 ——
+ * 只能**重建整張表**。順序照地雷 11 的教訓來：先 rename 舊表、建新表、複製、
+ * 最後才 DROP。`site_rules` 沒有任何表反過來指著它（它只指向 `sites`），
+ * 所以 DROP 不會觸發別人的 CASCADE。
+ *
+ * 新表的 CHECK 多一個 `'css'`。`hide` 其實是 `css` 的特例（它產生的就是
+ * `選擇器 { display: none !important }`），但兩個都留著：`hide` 只要一個選擇器、
+ * 不用懂 CSS，而且控制台能幫它數命中幾個元素。
+ *
+ * `sites.dev_mode` 打開時所有代理回應都 `no-cache`（保留 ETag）。預設關 ——
+ * 它是「反覆調規則的時候打開、調完關掉」的開關，不是常駐狀態。
+ */
+const SCHEMA_V6 = `
+ALTER TABLE site_rules RENAME TO site_rules_v5;
+
+CREATE TABLE site_rules (
+  id          TEXT PRIMARY KEY,
+  site_id     TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('hide', 'css', 'text-replace', 'text-rewrite')),
+  pattern     TEXT NOT NULL,
+  replacement TEXT,
+  scope       TEXT,
+  note        TEXT,
+  enabled     INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+
+INSERT INTO site_rules
+  (id, site_id, kind, pattern, replacement, scope, note, enabled, order_index, created_at, updated_at)
+SELECT
+  id, site_id, kind, pattern, replacement, scope, note, enabled, order_index, created_at, updated_at
+FROM site_rules_v5;
+
+DROP TABLE site_rules_v5;
+
+CREATE INDEX idx_site_rules_site ON site_rules (site_id, order_index, id);
+
+ALTER TABLE sites ADD COLUMN dev_mode INTEGER NOT NULL DEFAULT 0
+  CHECK (dev_mode IN (0, 1));
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -301,6 +347,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 5,
     up: (db) => db.exec(SCHEMA_V5),
+  }),
+  Object.freeze({
+    version: 6,
+    up: (db) => db.exec(SCHEMA_V6),
   }),
 ]);
 

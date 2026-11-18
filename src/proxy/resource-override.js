@@ -9,10 +9,48 @@
  * 只處理 GET / HEAD：POST 到一條圖片路徑是上游的事，不該被我們吃掉。
  */
 
+const { shortVersion } = require('../lib/cache-bust.js');
+
+/** 一年。`?v=` 是內容定址的，內容變了網址就變，所以永不過期是安全的。 */
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+
 /** 上游 path + query → 純路徑（覆寫比對的是路徑，`?v=2` 不該讓覆寫失效） */
 function pathnameOf(pathWithQuery) {
   const at = pathWithQuery.search(/[?#]/);
   return at === -1 ? pathWithQuery : pathWithQuery.slice(0, at);
+}
+
+/** 網址上帶的 `?v=` 跟這份檔案的雜湊對得上嗎 */
+function versionMatches(pathWithQuery, sha256) {
+  const at = pathWithQuery.indexOf('?');
+  if (at === -1) return false;
+
+  const version = shortVersion(sha256);
+  return (
+    version !== null &&
+    pathWithQuery
+      .slice(at + 1)
+      .split(/[&#]/)
+      .includes(`v=${version}`)
+  );
+}
+
+/**
+ * 覆寫的快取政策。
+ *
+ * ⛔ 預設 `no-store`：使用者換了圖要立刻看得到，而**沒有辦法從伺服器端回頭清掉
+ * 瀏覽器已經存下的那一份**（地雷 46）。
+ *
+ * 但 `?v=<對得上的雜湊>` 是另一回事 —— 那個網址只會對應到這一份內容，所以可以
+ * 放心長快取。HTML 裡的引用點由 `lib/cache-bust.js` 加上版本號，換圖 → 雜湊變 →
+ * 網址變 → 舊的那筆快取再也不會被用到。這就是「不用按 Ctrl+F5」的來源。
+ *
+ * 開發模式（`sites.dev_mode`）一律 revalidate，連 `?v=` 也不給長快取 ——
+ * 打開它的意思就是「我正在反覆改，什麼都別快取」。
+ */
+function cacheControlFor(site, pathWithQuery, override) {
+  if (site.dev_mode === true) return 'no-cache';
+  return versionMatches(pathWithQuery, override.sha256) ? IMMUTABLE : 'no-store';
 }
 
 /**
@@ -38,9 +76,7 @@ function serveResourceOverride(req, res, { store, site, pathWithQuery, logger })
 
   res.setHeader('content-type', override.content_type);
   res.setHeader('x-content-type-options', 'nosniff');
-  // ⛔ 不准長期快取：使用者換了圖之後要立刻看得到
-  // （地雷 33：我們回的東西是改造過的，不是上游那份）
-  res.setHeader('cache-control', 'no-store');
+  res.setHeader('cache-control', cacheControlFor(site, pathWithQuery, override));
   res.setHeader('x-lm-resource-override', '1');
   res.status(200);
 
@@ -54,4 +90,4 @@ function serveResourceOverride(req, res, { store, site, pathWithQuery, logger })
   return true;
 }
 
-module.exports = { serveResourceOverride, pathnameOf };
+module.exports = { serveResourceOverride, pathnameOf, versionMatches, cacheControlFor, IMMUTABLE };

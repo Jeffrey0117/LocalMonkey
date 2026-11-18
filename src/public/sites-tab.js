@@ -138,7 +138,12 @@ window.LocalMonkeySitesTab = (function createSitesTab() {
 
     // 翻譯設定（展開列）自己掛一組事件委派，同一個容器
     siteTranslate.init(rows, { siteOf: (element) => siteOf(element), onChanged: () => render() });
-    siteRules.init(rows, { siteOf: (element) => siteOf(element), onChanged: () => render() });
+    siteRules.init(rows, {
+      siteOf: (element) => siteOf(element),
+      onChanged: () => render(),
+      // 改了站本身的欄位（dev_mode）要重新抓清單，不然 render() 會拿舊的 site 物件
+      onSiteChanged: () => refresh(),
+    });
 
     delegate(rows, '[data-action="copy"]', 'click', (event, button) => {
       const site = state.sites.find((entry) => entry.id === siteIdOf(button));

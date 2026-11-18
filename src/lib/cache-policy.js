@@ -49,4 +49,34 @@ function withHtmlCachePolicy(pairs = []) {
   return [...kept, ['cache-control', 'no-store']];
 }
 
-module.exports = { withHtmlCachePolicy, CACHE_HEADERS };
+/**
+ * 「開發模式」的快取政策（SPEC-rules §8.2）：**所有**回應都要 revalidate。
+ *
+ * 為什麼需要它，而 `?v=` 的內容雜湊不夠：`?v=` 只救得了「HTML 裡有引用那條
+ * 路徑」的資源。被**外部 CSS 檔**的 `background-image: url()` 引用的圖拿不到
+ * 版本號 —— 那個網址寫在 CSS 檔裡，而 CSS 檔自己也被瀏覽器快取著。
+ *
+ * ⛔ `no-cache` **不是**「不要快取」，它是「每次都要先問過」。所以 ETag 與
+ * Last-Modified 要**留著**：瀏覽器帶 `If-None-Match` 來，上游回 304（沒有 body），
+ * 代價只有一次 round-trip。丟掉它們的話每次都要重傳整包 byte。
+ *
+ * 丟掉的是舊式的 `expires` / `age` / `pragma` —— 它們會讓瀏覽器自己算出
+ * 「還沒過期，不用問」，那正是我們要避免的。
+ *
+ * HTML 不走這條：它已經是 `no-store`（更強），而且 HTML 的 ETag 一定要丟掉
+ * （304 沒有 body，我們就沒得改寫 → 瀏覽器會拿**沒改寫過**的舊副本出來用）。
+ *
+ * @param {Array<[string, string]>} pairs
+ * @returns {Array<[string, string]>} 新陣列
+ */
+const REVALIDATE_DROPPED = new Set(['cache-control', 'expires', 'age', 'pragma']);
+
+function withDevModeCachePolicy(pairs = []) {
+  const kept = (Array.isArray(pairs) ? pairs : []).filter(
+    ([name]) => !REVALIDATE_DROPPED.has(String(name).toLowerCase()),
+  );
+
+  return [...kept, ['cache-control', 'no-cache']];
+}
+
+module.exports = { withHtmlCachePolicy, withDevModeCachePolicy, CACHE_HEADERS };

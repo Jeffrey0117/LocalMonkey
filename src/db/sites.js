@@ -13,10 +13,12 @@ const UPDATABLE_COLUMNS = Object.freeze([
   'translate_lang',
   'translate_model',
   'glossary',
+  // v6：開發模式（SPEC-rules §8.2）—— 所有回應改成 revalidate
+  'dev_mode',
 ]);
 
 /** 存成 0/1 的欄位（SQLite 沒有 boolean） */
-const FLAG_COLUMNS = new Set(['enabled', 'translate_enabled']);
+const FLAG_COLUMNS = new Set(['enabled', 'translate_enabled', 'dev_mode']);
 
 function toFlag(value) {
   return value === true || value === 1 ? 1 : 0;
@@ -38,6 +40,7 @@ function mapRow(row) {
     // 不然 UI 分不出「使用者選了這個模型」與「跟著全域走」。
     translate_model: row.translate_model,
     glossary: parseGlossary(row.glossary),
+    dev_mode: row.dev_mode === 1,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

@@ -91,3 +91,50 @@ test('空輸入也給得出 no-store（防呆）', () => {
   assert.deepEqual(withHtmlCachePolicy([]), [['cache-control', 'no-store']]);
   assert.deepEqual(withHtmlCachePolicy(), [['cache-control', 'no-store']]);
 });
+
+/* ------------------------------ 開發模式（§8.2） ------------------------------ */
+
+/**
+ * ⛔ `?v=` 只救得了「HTML 裡有引用那條路徑」的資源。被**外部 CSS 檔**的
+ * `background-image: url()` 引用的圖拿不到版本號 —— 那個網址在 CSS 檔裡，
+ * 而 CSS 檔自己也被快取著。開發模式就是那個邊界的解法：全部 revalidate。
+ */
+const { withDevModeCachePolicy } = require('../../src/lib/cache-policy.js');
+
+test('開發模式：cache-control 換成 no-cache', () => {
+  const pairs = withDevModeCachePolicy([
+    ['content-type', 'image/png'],
+    ['cache-control', 'max-age=604800'],
+  ]);
+
+  assert.equal(find(pairs, 'cache-control'), 'no-cache');
+  assert.equal(names(pairs).filter((name) => name === 'cache-control').length, 1);
+});
+
+test('⛔ 開發模式保留 ETag / Last-Modified（revalidate 很便宜，304 不傳 body）', () => {
+  const pairs = withDevModeCachePolicy([
+    ['etag', 'W/"abc"'],
+    ['last-modified', 'Mon, 16 Nov 2026 23:31:26 GMT'],
+  ]);
+
+  assert.equal(find(pairs, 'etag'), 'W/"abc"');
+  assert.equal(find(pairs, 'last-modified'), 'Mon, 16 Nov 2026 23:31:26 GMT');
+});
+
+test('開發模式丟掉舊式的 expires / age / pragma（它們會讓瀏覽器自己算出「還能用」）', () => {
+  const pairs = withDevModeCachePolicy([
+    ['expires', 'Tue, 17 Nov 2026 23:31:26 GMT'],
+    ['age', '4356'],
+    ['pragma', 'public'],
+    ['x-custom', 'keep-me'],
+  ]);
+
+  for (const header of ['expires', 'age', 'pragma']) {
+    assert.equal(names(pairs).includes(header), false, `${header} 應該被丟掉`);
+  }
+  assert.equal(find(pairs, 'x-custom'), 'keep-me');
+});
+
+test('開發模式上游完全沒有快取 header 時也要補上 no-cache', () => {
+  assert.equal(find(withDevModeCachePolicy([['content-type', 'image/png']]), 'cache-control'), 'no-cache');
+});

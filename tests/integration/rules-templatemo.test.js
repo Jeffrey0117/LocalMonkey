@@ -399,10 +399,15 @@ test('§3.6 換掉 logo：首頁與詳情頁都拿到新的檔案，而且不碰
     content_type: 'image/png',
   });
 
-  // 兩頁的 HTML 都還是指向同一條路徑（覆寫是在請求層做的，HTML 完全不用動）
+  /**
+   * 兩頁的 HTML 都還是指向同一條**路徑**，但會多一個內容雜湊
+   * （v6 的 cache busting，SPEC-rules §8.1）—— 不加的話瀏覽器會吃上游給的
+   * `max-age=604800`，換了 logo 七天內看不到。
+   */
+  const busted = `src="/p/templatemo-com/images/templatemo-logo-new.png?v=${asset.sha256.slice(0, 8)}"`;
   for (const pathname of ['/', '/tm-634-lantern-river']) {
     const { text } = await get(pathname);
-    assert.match(text, /src="\/p\/templatemo-com\/images\/templatemo-logo-new\.png"/, pathname);
+    assert.ok(text.includes(busted), `${pathname} 的 logo 引用應該帶內容雜湊：${busted}`);
   }
 
   const before = upstream.received.length;

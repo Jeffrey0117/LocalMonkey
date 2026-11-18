@@ -353,3 +353,36 @@ test('資源覆寫的端點要認證（跟後台其他端點一樣）', async (t
   const response = await fetch(`${app.base}/admin/api/sites/demo/resources`);
   assert.equal(response.status, 401);
 });
+
+/* ------------------------------ 開發模式（§8.2） ------------------------------ */
+
+test('PATCH /sites/:id {dev_mode}：存得起來，清單也看得到', async (t) => {
+  const { api } = await scenario(t);
+
+  const before = await api('/admin/api/sites');
+  assert.equal(before.body.sites[0].dev_mode, false, '預設關 —— 它不是常駐狀態');
+
+  const updated = await api('/admin/api/sites/demo', {
+    method: 'PATCH',
+    body: JSON.stringify({ dev_mode: true }),
+  });
+
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.site.dev_mode, true);
+
+  const after = await api('/admin/api/sites');
+  assert.equal(after.body.sites[0].dev_mode, true, '控制台的開關要讀得到目前狀態');
+});
+
+test('dev_mode 只收 true/false', async (t) => {
+  const { api } = await scenario(t);
+
+  // 0 / 1 是刻意放行的（跟 `enabled`、`translate_enabled` 同一套 checkEnabled）
+  for (const value of ['yes', null, 'on', 2, {}]) {
+    const response = await api('/admin/api/sites/demo', {
+      method: 'PATCH',
+      body: JSON.stringify({ dev_mode: value }),
+    });
+    assert.equal(response.status, 400, JSON.stringify(value));
+  }
+});
