@@ -133,15 +133,33 @@ function translatableAttributes(tag, attributes) {
 
 /** 巢狀堆疊：結束標籤把對應的開始標籤（以及中間沒關的）一起彈掉 */
 function popTo(stack, tag) {
-  const at = stack.lastIndexOf(tag);
+  const at = stack.findLastIndex((entry) => entry.tag === tag);
   return at === -1 ? stack : stack.slice(0, at);
 }
 
 /**
- * @param {string} html latin1 管線字串也可以（標記本身全是 ASCII）
- * @returns {Array<{start: number, end: number, raw: string, kind: 'text'|'attribute', element: string|null, attribute?: string}>}
+ * 堆疊上的一個元素。`id` / `classes` 只有 `rules/scope.js` 在用（把一條文字
+ * 規則限制在某個選擇器裡面），切段本身只需要 `tag`。
  */
-function segmentHtml(html) {
+function elementInfo(tag, attributes) {
+  const id = attributes.find((attribute) => attribute.name === 'id')?.value.trim();
+  const classAttribute = attributes.find((attribute) => attribute.name === 'class')?.value ?? '';
+
+  return {
+    tag,
+    id: id && id.length > 0 ? id : null,
+    classes: classAttribute.split(/\s+/).filter((name) => name.length > 0),
+  };
+}
+
+/**
+ * @param {string} html latin1 管線字串也可以（標記本身全是 ASCII）
+ * @param {{ ancestors?: boolean }} [options] `ancestors: true` 時每一段多帶一條
+ *   祖先鏈（最外層在前）。**預設不帶** —— 既有的呼叫端只要 `element`，而
+ *   多一個欄位會讓那些「整個 segment 物件 deepEqual」的測試變紅。
+ * @returns {Array<{start: number, end: number, raw: string, kind: 'text'|'attribute', element: string|null, attribute?: string, ancestors?: Array<object>}>}
+ */
+function segmentHtml(html, { ancestors: withAncestors = false } = {}) {
   if (typeof html !== 'string') return [];
 
   const segments = [];
@@ -160,7 +178,8 @@ function segmentHtml(html) {
       end,
       raw,
       kind: 'text',
-      element: stack.length > 0 ? stack[stack.length - 1] : null,
+      element: stack.length > 0 ? stack[stack.length - 1].tag : null,
+      ...(withAncestors ? { ancestors: stack } : {}),
     });
   };
 
@@ -233,7 +252,10 @@ function segmentHtml(html) {
       continue;
     }
 
-    for (const attribute of translatableAttributes(name.tag, attributesOf(html.slice(lt, gt + 1)))) {
+    const attributes = attributesOf(html.slice(lt, gt + 1));
+    const info = withAncestors ? elementInfo(name.tag, attributes) : { tag: name.tag };
+
+    for (const attribute of translatableAttributes(name.tag, attributes)) {
       if (attribute.value.trim().length === 0) continue;
 
       segments.push({
@@ -243,10 +265,12 @@ function segmentHtml(html) {
         kind: 'attribute',
         element: name.tag,
         attribute: attribute.name,
+        // 屬性住在這個元素身上，所以它自己也算祖先鏈的一節
+        ...(withAncestors ? { ancestors: [...stack, info] } : {}),
       });
     }
 
-    if (!selfClosing && !VOID_ELEMENTS.has(name.tag)) stack = [...stack, name.tag];
+    if (!selfClosing && !VOID_ELEMENTS.has(name.tag)) stack = [...stack, info];
 
     index = gt + 1;
     textStart = index;
@@ -261,6 +285,7 @@ module.exports = {
   segmentHtml,
   findTagEnd,
   attributesOf,
+  elementInfo,
   SKIP_ELEMENTS,
   TRANSLATABLE_ATTRIBUTES,
   VOID_ELEMENTS,
