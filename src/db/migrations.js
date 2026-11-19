@@ -408,6 +408,39 @@ CREATE TABLE reskin_cache (
 CREATE INDEX idx_reskin_cache_site ON reskin_cache (site_id, created_at);
 `;
 
+/**
+ * v9：單筆買斷的訂單（SPEC-checkout §3）。
+ *
+ * ⛔ **`site_id` 刻意沒有外鍵。** `reskin_cache`（v8）是 `ON DELETE CASCADE`，
+ * 因為它是純衍生資料；訂單相反 —— 刪一個站不該把那個站收過的錢一起刪掉。
+ * 這跟 `translate_queue.site_id` 不設外鍵是同一個判斷，代價是可能留下孤兒
+ * 訂單，而那比「靜默刪掉金流紀錄」好得多。
+ *
+ * ⛔ `status` 與 `env` 都有 CHECK。`env` 記的是「這筆是在哪個環境建的」——
+ * 測試單與正式單混在一起對帳會對出一個假的數字，而那是沒辦法事後補救的。
+ *
+ * ⛔ `raw_result` 存的是**解密後**的回應（對帳依據）。金鑰不在裡面，
+ * 也不准被寫進去。
+ */
+const SCHEMA_V9 = `
+CREATE TABLE reskin_orders (
+  id           TEXT PRIMARY KEY,
+  site_id      TEXT NOT NULL,
+  product_id   TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  amount       INTEGER NOT NULL,
+  currency     TEXT NOT NULL DEFAULT 'TWD',
+  status       TEXT NOT NULL CHECK (status IN ('pending', 'paid', 'failed', 'cancelled')),
+  env          TEXT NOT NULL CHECK (env IN ('test', 'live')),
+  trade_no     TEXT,
+  paid_at      TEXT,
+  created_at   TEXT NOT NULL,
+  raw_result   TEXT
+);
+
+CREATE INDEX idx_reskin_orders_site ON reskin_orders (site_id, created_at);
+`;
+
 const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 1,
@@ -440,6 +473,10 @@ const MIGRATIONS = Object.freeze([
   Object.freeze({
     version: 8,
     up: (db) => db.exec(SCHEMA_V8),
+  }),
+  Object.freeze({
+    version: 9,
+    up: (db) => db.exec(SCHEMA_V9),
   }),
 ]);
 

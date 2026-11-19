@@ -11,7 +11,7 @@ const { createFaviconService } = require('./services/favicon.js');
 const { createTranslationService } = require('./translate/service.js');
 const { createSiteRulesService } = require('./rules/service.js');
 const { createReskinService } = require('./reskin/service.js');
-const { paygateStatus } = require('./reskin/paygate.js');
+const { newebpayStatus } = require('./reskin/newebpay.js');
 const { createCrawler } = require('./translate/crawl.js');
 const { renderErrorPage, escapeHtml } = require('./views/pages.js');
 const { silentLogger } = require('./logger.js');
@@ -74,13 +74,14 @@ function createApp({
    * 重繪模式（v8，SPEC-reskin）。同樣沒有狀態（每個請求重讀 + 重編譯設定），
    * 抽出來的資料存在 DB 的 `reskin_cache` 裡而不是這個 instance 上。
    *
-   * `payments` 是「這台機器有沒有接金流」（SPEC-reskin-v2 §8）：env 齊了才算接上，
-   * 沒接就是示範模式。**只有一個布林值會進到頁面**，金鑰留在伺服器端。
+   * `payments` 是「這台機器有沒有接金流」（SPEC-checkout §1）：env 齊了才算接上，
+   * 沒接就是示範模式。**進到頁面的只有 `connected` 與 `env` 兩個值**，
+   * 金鑰留在伺服器端。
    */
   const reskin = createReskinService({
     store,
     logger,
-    payments: paygateStatus(config.paygate ?? {}),
+    payments: newebpayStatus(config.newebpay ?? {}),
   });
   app.locals.reskin = reskin;
 

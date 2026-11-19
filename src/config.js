@@ -159,20 +159,40 @@ function loadConfig(env = process.env) {
     },
 
     /**
-     * 重繪商城的金流（SPEC-reskin-v2 §8）——**只有測試環境**。
+     * 回呼用的對外網址（SPEC-checkout §1）。
      *
-     * ⛔ 四個值要嘛全有、要嘛全無：缺一個就是示範模式（`reskin/paygate.js`
-     * 的 `paygateStatus` 會把缺的那幾個名字列出來給控制台看）。
-     * 「半套設定」是這個生態踩過的坑：服務 200、健檢綠燈，但功能其實沒接上。
-     *
-     * ⛔ token 只在伺服器端用。版型放進 HTML 的只有一個布林值。
+     * ⛔ **留空才是常態。** 空的時候回呼網址用「這個請求的 Host」組
+     * （同投遞端點的決策：使用者會從 127.0.0.1、區網 IP、tunnel 網域進來，
+     * 每一種都要回到他來的地方）。這個值存在只為了一種情形：**躲在反向代理
+     * 後面**時 `Host` 是內部位址，後端自己組會組出 `https://127.0.0.1:9501/…`
+     * 這種打不開的網址（`~/.claude/rules/infra-map.md` 2026-11-14 實案）。
+     * 那時候才設它，而且設了就以它為準。
      */
-    paygate: {
-      url: parseToken(env.LOCALMONKEY_PAYGATE_URL),
-      token: parseToken(env.LOCALMONKEY_PAYGATE_TOKEN),
-      // PayGate 的方案是「product + plan_id」，兩個都得指定（方案在 PayGate 那邊建）
-      product: parseToken(env.LOCALMONKEY_PAYGATE_PRODUCT),
-      planId: parseToken(env.LOCALMONKEY_PAYGATE_PLAN),
+    publicUrl: parseToken(env.LOCALMONKEY_PUBLIC_URL),
+
+    /**
+     * 重繪商城的金流：**藍新 MPG 幕前支付**（SPEC-checkout）。
+     *
+     * ⛔ **沒有任何預設值，一個都沒有。** 商家金鑰由使用者自己填 `.env`
+     * （規格 §0.1），所以這裡只是把 env 轉述過去 —— 程式碼裡出現任何
+     * 範例金鑰都是錯的。
+     *
+     * ⛔ 三個必填值要嘛全有、要嘛全無：缺一個就是示範模式
+     * （`reskin/newebpay.js` 的 `newebpayStatus` 會把缺的那幾個名字列出來
+     * 給控制台看）。「半套設定」是這個生態踩過的坑：服務 200、健檢綠燈，
+     * 而功能其實從來沒接上。
+     *
+     * ⛔ `env` 預設 `test`。打錯字（`production` 之類）**不會**靜默退回
+     * `test`，而是整個當沒接 —— 金流的誤判方向只有一個是安全的。
+     *
+     * ⛔ `hashKey` / `hashIv` 只在伺服器端用。版型放進 HTML 的只有
+     * 「接上了沒」與「哪個環境」兩個值。
+     */
+    newebpay: {
+      env: parseToken(env.LOCALMONKEY_NEWEBPAY_ENV),
+      merchantId: parseToken(env.LOCALMONKEY_NEWEBPAY_MERCHANT_ID),
+      hashKey: parseToken(env.LOCALMONKEY_NEWEBPAY_HASH_KEY),
+      hashIv: parseToken(env.LOCALMONKEY_NEWEBPAY_HASH_IV),
     },
   };
 }

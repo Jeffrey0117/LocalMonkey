@@ -142,16 +142,38 @@ function renderCategories(categories) {
 }
 
 /**
- * 金流那一句話只有一個真相來源：伺服器端的 `payments.live`。
+ * 金流那一句話只有一個真相來源：伺服器端算好的 `payments.tone`。
  *
- * ⛔ 開頭那幾個字是**狀態**（「未接金流（示範模式）」／「測試金流」），
- * 後面才是解釋。規格 §8 要的是「在 UI 標示」，而標示要在**按鈕旁邊**
- * 看得到 —— 只寫在頁尾或只在面板打開後才出現，等於沒標。
+ * ⛔ **版型不准自己判斷三態。** `connected`（接上了沒）與 `env`（哪個環境）
+ * 組起來的那個判斷只准有一份，算在 `reskin/service.js` 的
+ * `paymentsForTheme()` 裡 —— 組錯的其中一種結果是「畫面寫測試環境、實際
+ * 在正式環境扣款」。這裡只認 `tone`。
+ *
+ * ⛔ 開頭那幾個字是**狀態**，後面才是解釋。標示要在**按鈕旁邊**看得到 ——
+ * 只寫在頁尾、或只在面板打開之後才出現，使用者按下去之前是看不到的。
+ *
+ * ⛔ `live` 那一句是使用者自己要求的（SPEC-checkout §0）：他要用正式環境，
+ * 但**按下去之前必須看得到會真的扣款**。所以它配警告色（`is-live`），
+ * 而且不准被縮成「已接金流」這種看不出嚴重性的字。
  */
+const PAYMENT_NOTES = Object.freeze({
+  demo: '未接金流（示範模式）：購物車與訂單只存在這台瀏覽器裡，不會收費。',
+  test: '測試環境（不會真的扣款）：走的是藍新測試金流，刷卡流程是真的，錢不是。',
+  live: '正式環境（會真的扣款）：按下去就是真的刷卡，款項會真的被收走。',
+});
+
+function paymentTone(payments) {
+  return PAYMENT_NOTES[payments?.tone] === undefined ? 'demo' : payments.tone;
+}
+
 function paymentNote(payments) {
-  return payments.live
-    ? '測試金流（PayGate 測試環境）：是真的刷卡流程，但扣的是測試金流。'
-    : '未接金流（示範模式）：購物車與訂單只存在這台瀏覽器裡。';
+  return PAYMENT_NOTES[paymentTone(payments)];
+}
+
+/** 正式環境那一列要是警告色（規格 §1）。其餘兩態是中性的。 */
+function paymentToneClass(payments) {
+  const tone = paymentTone(payments);
+  return tone === 'live' ? 'lm-pay-note is-live' : `lm-pay-note is-${tone}`;
 }
 
 function renderFooter({ payments }) {
@@ -178,11 +200,12 @@ function renderFooter({ payments }) {
  */
 function renderCheckoutDialog({ currency, price, payments, itemName }) {
   const amount = price === 0 ? '免費' : formatMoney(currency, price);
+  const connected = paymentTone(payments) !== 'demo';
 
   return `
   <dialog class="lm-dialog" data-lm-checkout>
     <div class="lm-dialog-head">
-      <b>${payments.live ? '結帳' : '確認訂單（示範）'}</b>
+      <b>${connected ? '結帳' : '確認訂單（示範）'}</b>
       <button type="button" data-lm-close aria-label="關閉">&times;</button>
     </div>
     <div class="lm-dialog-body">
@@ -190,9 +213,9 @@ function renderCheckoutDialog({ currency, price, payments, itemName }) {
         <span>${escapeHtml(itemName ?? '這份模板')}</span>
         <em>${escapeHtml(amount)}</em>
       </div>
-      <p>${escapeHtml(paymentNote(payments))}</p>
+      <p class="${escapeHtml(paymentToneClass(payments))}">${escapeHtml(paymentNote(payments))}</p>
       ${
-        payments.live
+        connected
           ? `
       <label for="lm-email">收據要寄到哪個 email
         <input id="lm-email" type="email" inputmode="email" autocomplete="email"
@@ -204,7 +227,7 @@ function renderCheckoutDialog({ currency, price, payments, itemName }) {
       <div class="lm-dialog-foot">
         <button class="lm-btn lm-btn-flat" type="button" data-lm-close>取消</button>
         <button class="lm-btn lm-btn-solid" type="button" data-lm-checkout-go>
-          ${payments.live ? '前往付款' : '確認'}
+          ${connected ? '前往付款' : '確認'}
         </button>
       </div>
     </div>
@@ -300,6 +323,9 @@ module.exports = {
   renderFooter,
   renderCheckoutDialog,
   paymentNote,
+  paymentTone,
+  paymentToneClass,
+  PAYMENT_NOTES,
   heading,
   formatCount,
   formatMoney,

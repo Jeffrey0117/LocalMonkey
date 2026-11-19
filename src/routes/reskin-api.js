@@ -158,6 +158,37 @@ function createReskinApiRouter({ store, reskin, config, logger, fetchImpl }) {
     res.json({ ...reskin.statusFor(saved), config: saved.reskin_config, cache_cleared: cleared });
   });
 
+  /**
+   * 訂單清單（SPEC-checkout §3）——**唯讀**。
+   *
+   * ⛔ 沒有刪除、沒有「標成已付款」。訂單是這個專案裡唯一「掉了就回不來」的
+   * 資料，而一個能從控制台改金流狀態的按鈕，遲早會被用來蓋掉一筆真實的
+   * 對帳紀錄。要改就去 SQLite，而那時候你會知道自己在做什麼。
+   *
+   * ⛔ `raw_result` **不回**：那是解密後的交易結果，裡面有卡號前六後四。
+   * 控制台的清單不需要它，而「回了就會留在瀏覽器紀錄、擴充套件、截圖裡」
+   * 的理由跟「設定分頁不回 token」是同一條。
+   */
+  router.get('/sites/:siteId/reskin/orders', (req, res) => {
+    const site = requireSite(req, res);
+    if (!site) return;
+
+    const orders = store.reskinOrders.list({ siteId: site.id }).map((order) => ({
+      id: order.id,
+      product_id: order.product_id,
+      product_name: order.product_name,
+      amount: order.amount,
+      currency: order.currency,
+      status: order.status,
+      env: order.env,
+      trade_no: order.trade_no,
+      paid_at: order.paid_at,
+      created_at: order.created_at,
+    }));
+
+    res.json({ orders, total: store.reskinOrders.count(site.id) });
+  });
+
   router.post('/sites/:siteId/reskin/cache/clear', (req, res) => {
     const site = requireSite(req, res);
     if (!site) return;

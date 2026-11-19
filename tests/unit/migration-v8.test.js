@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Database = require('better-sqlite3');
 
-const { migrate, MIGRATIONS, SCHEMA_VERSION } = require('../../src/db/migrations.js');
+const { MIGRATIONS, SCHEMA_VERSION } = require('../../src/db/migrations.js');
 const { openDatabase } = require('../../src/db/index.js');
 const { createStore } = require('../../src/db/store.js');
 
@@ -37,14 +37,16 @@ function columnsOf(db, table) {
 }
 
 /**
- * ⛔ 這條故意釘**當下**的版本號（而不是跟著 SCHEMA_VERSION 浮動）：加 migration
- * 的時候要被迫回來看一眼，確認自己是「加新版本」而不是「改舊的那一版」。
- * 加了 v9 就把這個釘子搬到 migration-v9.test.js，並把這條改成只釘 v8 自己。
+ * ⛔ 「現在的 schema 版本是幾」那個釘子已經搬到 `migration-v9.test.js`
+ * （上一版的註解就是這樣要求的：加了 v9 就搬過去，這條改成只釘 v8 自己）。
+ * 這裡剩下的工作是「v8 這一版本身沒被改掉」—— 跑到 v8 就停，
+ * `user_version` 必須正好是 8。
  */
-test('schema 版本是 8', () => {
-  const db = new Database(':memory:');
-  assert.equal(migrate(db), 8);
-  assert.equal(SCHEMA_VERSION, 8);
+test('跑到 v8 就停的時候，user_version 正好是 8', () => {
+  assert.equal(upTo(8).pragma('user_version', { simple: true }), 8);
+  assert.ok(MIGRATIONS.some((item) => item.version === 8));
+  // 這一版不是最後一版了，但它必須還在最後一版的「之前」
+  assert.ok(SCHEMA_VERSION >= 8);
 });
 
 test('sites 多出四個 reskin 欄位，開關預設關', () => {

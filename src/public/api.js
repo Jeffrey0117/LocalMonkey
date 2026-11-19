@@ -185,6 +185,9 @@ window.LocalMonkeyApi = (function createApi() {
 
     getReskin: (siteId) => request('GET', `/sites/${id(siteId)}/reskin`),
 
+    /** 訂單清單（SPEC-checkout §3）。唯讀 —— 沒有對應的寫入端點。 */
+    getReskinOrders: (siteId) => request('GET', `/sites/${id(siteId)}/reskin/orders`),
+
     /**
      * 存抽取設定。
      *

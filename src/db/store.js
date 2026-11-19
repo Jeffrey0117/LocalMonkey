@@ -9,6 +9,7 @@ const crawlJobs = require('./crawl-jobs.js');
 const siteRules = require('./site-rules.js');
 const resourceOverrides = require('./resource-overrides.js');
 const reskin = require('./reskin.js');
+const reskinOrders = require('./reskin-orders.js');
 
 /**
  * 把 repository 函式綁上同一個 db handle，路由層就不用到處傳 db。
@@ -108,6 +109,22 @@ function createStore(db) {
       trim: (siteId, limit) => reskin.trimReskinCache(db, siteId, limit),
       clear: (siteId) => reskin.clearReskinCache(db, siteId),
       count: (siteId) => reskin.countReskinCache(db, siteId),
+    },
+
+    /**
+     * v9：單筆買斷的訂單（SPEC-checkout §3）。
+     *
+     * ⛔ 跟上面的 `reskinCache` 是**相反**的東西：那個清掉只是重算一次，
+     * 這個清掉就沒了。所以沒有 `clear`，`site_id` 也沒有外鍵
+     * （刪站不連帶刪訂單，理由在 `db/reskin-orders.js`）。
+     */
+    reskinOrders: {
+      create: (input) => reskinOrders.createReskinOrder(db, input),
+      get: (id) => reskinOrders.getReskinOrder(db, id),
+      markPaid: (input) => reskinOrders.markReskinOrderPaid(db, input),
+      markFailed: (input) => reskinOrders.markReskinOrderFailed(db, input),
+      list: (options) => reskinOrders.listReskinOrders(db, options),
+      count: (siteId) => reskinOrders.countReskinOrders(db, siteId),
     },
 
     crawlJobs: {

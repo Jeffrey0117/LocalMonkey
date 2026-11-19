@@ -20,6 +20,7 @@ const {
   shopInitial,
   heading,
   paymentNote,
+  paymentToneClass,
   BRAND,
 } = require('./parts.js');
 
@@ -166,7 +167,9 @@ function renderBuy(data, pricing, payments) {
       }
       <button class="lm-btn lm-btn-solid" type="button" data-lm-buy>立即購買</button>
     </div>
-    <p class="lm-note lm-pay-note">${escapeHtml(paymentNote(payments))}</p>
+    <p class="lm-note ${escapeHtml(paymentToneClass(payments))}">${escapeHtml(
+      paymentNote(payments),
+    )}</p>
   </div>`;
 }
 

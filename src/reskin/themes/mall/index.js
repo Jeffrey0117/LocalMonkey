@@ -31,13 +31,24 @@ const LABEL = '模板商城（深靛藍）';
 /**
  * 給瀏覽器端 `shop.js` 的設定。**只放畫面要用的東西** ——
  * 這份 JSON 是公開的（它就在 HTML 裡），所以不要放任何內部資訊
- * （金流的網址與金鑰只活在伺服器端，見 `reskin/paygate.js`）。
+ * （商家金鑰只活在伺服器端，見 `reskin/newebpay.js`）。
  */
 function shopConfigFor(data, pricing, { siteId, payments }) {
   return {
     siteId,
     currency: pricing.currency,
-    payments: { live: payments.live, note: paymentNote(payments) },
+    /**
+     * ⛔ 只有「接上了沒」「哪個環境」「那句話」。商家代號、端點網址、金鑰
+     * 一個都不在這裡 —— 這份 JSON 就印在 HTML 裡，任何人都看得到。
+     * （`MerchantID` 只會出現在真的要 POST 去藍新的那張表單上，
+     * 而那是結帳當下由伺服器端回來的，見 `routes/internal.js`。）
+     */
+    payments: {
+      connected: payments.connected === true,
+      env: payments.env,
+      tone: payments.tone,
+      note: paymentNote(payments),
+    },
     plans: pricing.plans.map((plan) => ({ id: plan.id, name: plan.name, price: plan.price })),
     item:
       data.kind === 'product'
@@ -56,7 +67,7 @@ function priceOf(pricing) {
  *   siteId: string,
  *   home: string,
  *   pricing: { currency: string, plans: Array<object> },
- *   payments: { live: boolean },
+ *   payments: { connected: boolean, env: 'test'|'live', tone: 'demo'|'test'|'live' },
  * }} context
  * @returns {string} 一份完整的 HTML 文件（真文字，**不是** latin1 管線字串 ——
  *   編碼是 `reskin/service.js` 在邊界上做的事）

@@ -12,6 +12,9 @@ LocalMonkey = reverse proxy + 在回應的 HTML 裡注入使用者自己的 JS�
   ＋ **v7（§12）**：`no-translate` 規則型別（哪些段不要餵給模型）
 - [`docs/SPEC-reskin.md`](docs/SPEC-reskin.md) —— **v8：重繪**（第三種模式：
   上游當**資料來源**，用我們自己的版型重畫）
+- [`docs/SPEC-checkout.md`](docs/SPEC-checkout.md) —— **v10：單筆結帳（藍新 MPG）**
+  （把「立即購買」接成真的金流。⛔ 回呼的驗證順序是這份的安全重點；
+  ⛔ localhost 收不到 `NotifyURL`，所以**不是**完整實作）
 - [`docs/SPEC-reskin-v2.md`](docs/SPEC-reskin-v2.md) —— **v9：重繪第二輪**
   （收斂成「html模板大王」：換色票、拿掉模仿來的東西、方案只留一檔、
   無限載入、**測試環境的金流**）
@@ -48,7 +51,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1356 個測試
+npm test             # node:test，1443 個測試
 npm run test:coverage
 ```
 
@@ -286,7 +289,8 @@ src/reskin/
   extract.js      設定 + HTML → 資料模型（listing / product）＋ DATA_MODEL_VERSION
   url.js          上游網址 → 代理路徑（版型層因此只拿到本站路徑）
   pricing.js      價格方案（上游沒有價格，我們自己定；預設只有一檔）
-  paygate.js      金流（v9，**只有測試環境**）：env 齊了才算接上，金鑰只在伺服器端
+  newebpay.js     金流（v10）：藍新 MPG 幕前支付的加解密、驗章、訂單編號、表單
+                  —— env 齊了才算接上，HashKey/HashIV 只在伺服器端（SPEC-checkout）
   presets/        各站的抽取設定（**資料**，會被丟掉的那一層）
   themes/         版型（資產）—— mall/{index,parts,listing,product,css}.js
   service.js      門面：代理與控制台叫的都是這支
@@ -294,13 +298,39 @@ src/public/reskin-shop.js   購物車／結帳面板（localStorage ＋ /__lm/re
 src/public/reskin-feed.js   列表頁的無限載入（v9，IntersectionObserver ＋ 照網址去重）
 ```
 
-v9 多出來的三支**前台**端點掛在 `/__lm`（免認證，商店前台本來就是匿名的）：
+重繪商城的**前台**端點掛在 `/__lm`（免認證，商店前台本來就是匿名的）：
 
 ```
-GET  /__lm/reskin/listing?site=&path=  下一頁 → { ok, html(卡片), page, totalPages, nextPath }
-POST /__lm/reskin/checkout             建立結帳（Bearer 只在伺服器端送出去）
-GET  /__lm/reskin/paid?site=           從付款頁回來的那一頁（**拿不到付款結果**，見地雷 69）
+GET  /__lm/reskin/listing?site=&path=   下一頁 → { ok, html(卡片), page, totalPages, nextPath }
+POST /__lm/reskin/checkout              建單（pending）→ { action, fields } ＝要 POST 去藍新的表單
+POST /__lm/reskin/checkout/return       ReturnURL：**先驗章**再解密再比對金額（v10）
+POST /__lm/reskin/checkout/notify       NotifyURL：同一套驗證，回純文字。
+                                        ⛔ **在 localhost 永遠不會被呼叫到**（見地雷 69）
+GET  /__lm/reskin/paid?site=&order=     ClientBackURL：讀**我們自己的訂單**，不猜結果
 ```
+
+### 結帳一筆怎麼走（v10，SPEC-checkout）
+
+```
+立即購買 → POST /__lm/reskin/checkout
+             priceFor()      金額由**伺服器端**的價格設定算（前端只送方案 id 與數量）
+             建 reskin_orders（pending、記下 env）
+             reskin/newebpay.js buildMpgForm()
+               查詢字串 → AES-256-CBC(PKCS7) → hex ＝ TradeInfo
+               SHA256(`HashKey=K&<TradeInfo>&HashIV=V`) 大寫 ＝ TradeSha
+         → 瀏覽器把 { MerchantID, TradeInfo, TradeSha, Version, EncryptType } POST 去藍新
+         → 藍新 POST 回 ReturnURL
+             readCallback()  ① 驗 TradeSha（不符就**到此為止，不解密**）
+                             ② 解密 ③ 比對訂單與商店代號 ④ 比對金額
+             settle()        markPaid 的條件寫在 UPDATE 的 WHERE 裡 ＝ idempotent
+```
+
+⛔ **①~④ 的順序就是規格**（SPEC-checkout §2.2）。「先解密再說」是拿我們的金鑰去
+處理一段來源不明的輸入，而驗章只花一次 SHA256。有一條測試專門釘這個順序
+（送「別把金鑰加密的密文 + 亂寫的簽章」，`reason` 必須是 `bad-sha` 而不是 `bad-cipher`）。
+
+⛔ **`HashKey` / `HashIV` 不准離開伺服器**（有測試掃回應與頁面）。`MerchantID` 會出現在
+那張表單裡 —— 那是幕前支付的協定本身要求的，而它不是秘密。
 
 ### ⛔ v8 的依賴例外：為什麼仍然沒有引入 HTML parser
 
@@ -450,6 +480,30 @@ reskin_cache    key(PK) / site_id → sites(ON DELETE CASCADE) / path
 - 快取是**純衍生資料** → 可以放心 CASCADE、放心整站清掉。
   這跟 `translate_queue` 刻意不設外鍵是**相反**的判斷：那裡存的是「還沒做完的
   工作」，不是衍生資料。
+
+## 資料模型（v10 新增）
+
+```
+reskin_orders   id(PK, 'HTK'+時間+隨機) / site_id（**沒有外鍵**） / product_id / product_name
+                amount / currency / status / env / trade_no / paid_at / created_at / raw_result
+```
+
+- **這是整個專案裡唯一「掉了就回不來」的資料。** 其他東西都能重算：
+  `reskin_cache` 是純衍生、`translations` 重翻一次就有、腳本在使用者手上也有
+  一份。訂單記的是「誰付了多少錢」，而且是我們唯一能跟金流對帳的憑據。
+- **所以 `site_id` 刻意不是外鍵**（同 `translate_queue` 的判斷，但代價更高）：
+  刪一個站不該把那個站收過的錢一起刪掉，而那種刪除是**靜默**的。
+  上面的 `reskin_cache` 是 `ON DELETE CASCADE` —— 兩者刻意相反，有測試釘著。
+- **`status` 與 `env` 都有 CHECK。** `env` 記的是「這筆是在哪個環境建的」：
+  測試單與正式單混在一起對帳會對出一個假的數字，而那沒辦法事後補救。
+- **狀態轉移靠 SQL 的 WHERE，不靠先讀再寫**（`markPaid` 是
+  `WHERE id = ? AND status <> 'paid'`，回 `changes`）。同一筆被回呼打到兩次
+  以上是**正常的**（ReturnURL 與 NotifyURL 都會送，使用者還可能重新整理），
+  先 SELECT 再 UPDATE 會留一個空隙讓同一筆被處理兩次。
+  `markFailed` 同樣不准動已經 `paid` 的 —— 回呼的到達順序不保證。
+- **控制台的訂單清單是唯讀的，而且不回 `raw_result`**：那是解密後的交易結果，
+  裡面有卡號前六後四（理由同「設定分頁不回 token」）。沒有任何寫入端點 ——
+  一個「標成已付款」的按鈕遲早會蓋掉一筆真實的對帳紀錄。
 
 ---
 
@@ -841,12 +895,18 @@ reskin_cache    key(PK) / site_id → sites(ON DELETE CASCADE) / path
     ① 抽取層在「我在第幾頁」不明的時候要從**最小**的頁碼連結接下去，不是回 null
     ② 因此前端一定要**照網址去重**（首頁的 12 件也在第 1 頁裡）。
     一般原則：分頁的入口頁與第一頁重疊是常態，去重比「算得準」可靠。
-69. **⛔ 金流的「返回商店」那一跳帶不回付款結果。** 藍新的 `BackURL` 只是一顆
-    返回按鈕，真正的結果是 server-to-server 打到 PayGate 的 notify。
-    所以回跳頁不准寫「付款成功」—— 寫了就是在猜，而猜錯的方向剛好是最糟的。
-    （PayGate 那支端點是**定期定額**，所以這條路做出來的是訂閱不是單次購買；
-    要收一次性的錢得先在 PayGate 那邊開端點。契約是 2026-11-19 實打出來的，
-    寫在 `reskin/paygate.js` 的檔頭，別憑記憶改。）
+69. **⛔ 金流的「返回商店」那一跳帶不回付款結果。** 藍新的 `ClientBackURL` 只是
+    一顆返回按鈕。所以回跳頁不准寫「付款成功」—— 寫了就是在猜，而猜錯的方向
+    剛好是最糟的。v10 的做法是讓那一頁去讀**我們自己的 `reskin_orders`**，
+    訂單說什麼就寫什麼（還是 `pending` 就老實說「還沒收到結果」）。
+    **同一條的第二半（v10，SPEC-checkout §0.2）：在 localhost 收不到 `NotifyURL`。**
+    藍新的伺服器打不到 `127.0.0.1`，所以這台機器上訂單狀態**完全靠 ReturnURL
+    那一跳**。使用者付完直接關掉瀏覽器就沒有人會來告訴我們結果，那一筆永遠
+    停在 `pending`。端點做好了（`/__lm/reskin/checkout/notify`，跟 ReturnURL
+    共用同一套驗證），但要 tunnel 或真的部署才有用 —— **這不是完整實作**，
+    `.env.example`、README、控制台三個地方都寫著這件事，不要把它們拿掉。
+    （本期**不接 PayGate**：那是訂閱帳本，串的是藍新定期定額，而「一套模板
+    NT$199、立即購買」是單筆買斷。`reskin/paygate.js` 已經刪掉。）
 70. **⛔ 「品名顯示成別的字」不一定是抽取層的錯 —— 先問那段字是誰寫上去的。**
     實測：商品頁的品名變成「這頁經過 LocalMonkey」而麵包屑是對的 ——
     因為資料本來就是對的，動手腳的是使用者自己那支還開著的注入測試腳本

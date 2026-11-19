@@ -623,21 +623,65 @@ LOCALMONKEY_GM_ALLOW_HOSTS=localhost:8001,127.0.0.1:8001
 - **價格是你自己定的**（上游沒有價格），預設**只有一檔**，商品頁就是一個價格、
   直接買；購買列只有「預覽｜立即購買」。
 
-### 金流（只有測試環境）
+### 金流：藍新 MPG 幕前支付（單筆買斷）
 
-沒設 env ＝ **示範模式**：購物車與訂單只存在那台瀏覽器裡，而且畫面上會講明白。
-四個 env 都設了才會真的走金流（[PayGate](https://paygate.isnowfriend.com) →
-藍新**測試環境**）：
+「一套模板 NT$199、立即購買」是**單筆買斷**，所以走藍新的 **MPG 幕前支付**
+（不是定期定額、不經 PayGate —— PayGate 是訂閱帳本，形狀不對）。
+
+**沒設 env ＝ 示範模式**：購物車與訂單只存在那台瀏覽器裡，而且購買按鈕
+旁邊就寫著「未接金流（示範模式）」。三個必填值都設了才會真的走金流：
 
 ```bash
-LOCALMONKEY_PAYGATE_URL=https://paygate.isnowfriend.com
-LOCALMONKEY_PAYGATE_TOKEN=…        # 只在伺服器端用，不會出現在頁面上
-LOCALMONKEY_PAYGATE_PRODUCT=…      # PayGate 那邊的產品代號
-LOCALMONKEY_PAYGATE_PLAN=…         # PayGate 那邊的方案 id（金額以它為準）
+LOCALMONKEY_NEWEBPAY_ENV=test          # test（預設）| live
+LOCALMONKEY_NEWEBPAY_MERCHANT_ID=      # 商店代號
+LOCALMONKEY_NEWEBPAY_HASH_KEY=         # 32 個字，只在伺服器端用
+LOCALMONKEY_NEWEBPAY_HASH_IV=          # 16 個字，只在伺服器端用
+LOCALMONKEY_PUBLIC_URL=                # 選填：躲在反向代理後面時才要設
 ```
 
-缺一個就是示範模式，而且控制台的「重繪」面板會把**缺哪幾個**列出來。
-PayGate 那支端點是**定期定額**，所以這條路建立的是訂閱、不是一次性購買。
+**這四個值由你自己填 `.env`**，程式碼裡沒有任何預設值、沒有任何範例金鑰。
+`HashKey` / `HashIV` 一個 byte 都不會離開伺服器（有測試釘著）。`MerchantID`
+會出現在那張送去藍新的表單裡 —— 那是幕前支付的協定本身要求的，而它不是秘密。
+
+- 缺一個就是示範模式，控制台的「重繪」面板會把**缺哪幾個**列出來。
+  金鑰長度不對（不是 32 / 16 個字）也算沒接上。
+- `ENV` 打錯字（`production` 之類）**不會**靜默退回 `test`，而是整個當沒接。
+- **`ENV=live` 時購買列是警告色的「正式環境（會真的扣款）」。** 你自己要用
+  正式環境沒問題，但按下去之前必須看得到。
+- **金額由伺服器端算**（控制台的「價格方案」× 數量），前端改不了；回呼還會
+  再跟訂單比對一次金額。
+- 訂單在控制台的「重繪」面板裡有一張**唯讀**的清單（時間、商品、金額、狀態、環境）。
+
+#### ⛔ 已知限制：在 localhost 收不到 `NotifyURL`
+
+| 回呼 | 在 localhost |
+|---|---|
+| `ReturnURL`（付完瀏覽器帶著結果跳回來） | ✅ 收得到 —— 瀏覽器就在這台機器上 |
+| `NotifyURL`（藍新的**伺服器**主動通知） | ❌ **收不到** —— 它打不到 `127.0.0.1` |
+
+所以在這台機器上，訂單狀態**完全靠瀏覽器跳回來那一跳**確認。使用者付完
+**直接關掉瀏覽器**就沒有人會來告訴我們結果，那一筆會永遠停在
+「還沒收到結果」（`pending`）。
+
+**這在正式站是不夠的。** `NotifyURL` 的端點（`/__lm/reskin/checkout/notify`）
+已經做好，驗證與結算跟 `ReturnURL` 共用同一套 —— 但它要能被外面打到才有用：
+用 tunnel 把這台機器露出去，或真的部署，然後把 `LOCALMONKEY_PUBLIC_URL`
+設成那個對外網址。在那之前，這**不是**完整的金流實作。
+
+#### 回呼的驗證順序
+
+```
+1. 驗 TradeSha      ← 不符就直接拒絕（403），連解密都不做
+2. 解密 TradeInfo
+3. 比對 MerchantOrderNo 是我們建立過的訂單、商店代號對得上
+4. 比對金額
+5. 同一筆重複回呼是 idempotent；已經付款的訂單不會被後到的失敗回應改掉
+```
+
+「先解密再說」是錯的：解密是拿我們的金鑰去處理一段來源不明的輸入，而驗章
+只花一次 SHA256 就能證明那段密文是我們這家商店的對手方產生的。偽造的
+`TradeSha` 會被擋在解密之前（`tests/integration/reskin-checkout.test.js`
+有一條測試專門釘這個順序）。
 
 ---
 

@@ -8,7 +8,14 @@ const express = require('express');
 const { wrapUserCode } = require('../lib/user-script.js');
 const { buildShimConfig, renderShim } = require('../lib/gm-shim.js');
 const { themeFor, isKnownTheme, DEFAULT_THEME } = require('../reskin/themes/index.js');
-const { createPaygate } = require('../reskin/paygate.js');
+const {
+  newebpayStatus,
+  normalizeBaseUrl,
+  newOrderNo,
+  buildMpgForm,
+  readCallback,
+} = require('../reskin/newebpay.js');
+const { compilePricing, headlinePrice } = require('../reskin/pricing.js');
 const { pathnameOf } = require('../reskin/service.js');
 const { fetchUpstreamPage } = require('../services/fetch-page.js');
 const { requestOrigin } = require('../services/delivery.js');
@@ -103,10 +110,38 @@ function sendNotFound(res, message) {
 function createInternalRouter({ store, favicons, reskin, config, logger = silentLogger, fetchImpl }) {
   const router = express.Router();
 
-  const paygate =
-    reskin && config
-      ? createPaygate({ settings: config.paygate ?? {}, fetchImpl, logger })
-      : null;
+  /**
+   * 金流（SPEC-checkout）。`reskin` / `config` 沒給就整組不掛
+   * —— 同 `admin-api.js` 對 `crawler` 的做法。
+   */
+  const newebpay = reskin && config ? config.newebpay ?? {} : null;
+  const payments = newebpay === null ? null : newebpayStatus(newebpay);
+
+  /**
+   * 回呼網址的根。
+   *
+   * ⛔ 預設用**這個請求的 Host**（同投遞端點的決策：使用者會從 127.0.0.1、
+   * 區網 IP、tunnel 網域進來，每一種都要回到他來的地方）。設了
+   * `LOCALMONKEY_PUBLIC_URL` 才以它為準 —— 那是給「躲在反向代理後面」用的，
+   * 那時候 `Host` 是內部位址，自己組會組出打不開的網址。
+   */
+  function callbackBase(req) {
+    return normalizeBaseUrl(config?.publicUrl) ?? requestOrigin(req);
+  }
+
+  function callbackUrls(req, base, siteId, orderId) {
+    const site = encodeURIComponent(siteId);
+    const order = encodeURIComponent(orderId);
+
+    return {
+      // 付完瀏覽器帶著加密結果 POST 回來的那一支（localhost 唯一收得到的）
+      returnUrl: `${base}/__lm/reskin/checkout/return`,
+      // 藍新伺服器主動打的那一支。⛔ localhost 收不到（規格 §0.2）
+      notifyUrl: `${base}/__lm/reskin/checkout/notify`,
+      // 「返回商店」／中途離開：讀我們自己的訂單狀態，不猜結果
+      clientBackUrl: `${base}/__lm/reskin/paid?site=${site}&order=${order}`,
+    };
+  }
 
   /**
    * 站點 favicon（後台列表用）。**永遠回 200 的一張圖** —— 抓不到、站不存在、
@@ -282,24 +317,69 @@ function createInternalRouter({ store, favicons, reskin, config, logger = silent
     }
   });
 
+  /* ------------------------------ 結帳（§2） ------------------------------ */
+
+  /** 這個站現在賣多少錢。**金額只由伺服器端算**，請求裡的數字一律不採信。 */
+  function priceFor(site, { planId, qty }) {
+    const pricing = compilePricing(site.reskin_pricing);
+    const value = pricing.ok ? pricing.value : compilePricing(null).value;
+
+    const headline = headlinePrice(value.plans);
+    const plan =
+      value.plans.find((candidate) => candidate.id === planId) ??
+      value.plans.find((candidate) => candidate.price === headline.price) ??
+      value.plans[0];
+
+    return { plan, amount: plan.price * qty };
+  }
+
+  function clampQty(raw) {
+    const qty = Number.parseInt(raw, 10);
+    return Number.isInteger(qty) && qty >= 1 ? Math.min(qty, 99) : 1;
+  }
+
   /**
-   * 結帳（SPEC-reskin-v2 §8）。**只有測試環境**。
+   * 商品的身分與名稱。
+   *
+   * ⛔ 這兩個是**前端給的**（抽取層的資料只有瀏覽器那一頁有，伺服器要知道
+   * 就得再抓一次上游再抽一次）。所以它們只能當**標籤**用：進訂單、進
+   * `ItemDesc`，長度夾死、輸出一律轉義。
+   * **金額不在這裡** —— 那個只由 `priceFor()` 從伺服器端的設定算。
+   */
+  function productFrom(body) {
+    const id = String(body?.productId ?? '').trim().slice(0, 80);
+    const name = String(body?.productName ?? '').trim().replace(/\s+/g, ' ').slice(0, 120);
+
+    return { id: id.length > 0 ? id : '-', name: name.length > 0 ? name : '模板' };
+  }
+
+  /**
+   * 結帳（SPEC-checkout §2）：建一筆 `pending` 訂單，回那張要 POST 去藍新的表單。
    *
    * ⛔ 免認證是刻意的（商店前台本來就是匿名的，整個代理也是），
-   * 但因此這支**只做一件事**：拿這個站的設定去 PayGate 建一筆訂單。
-   * 金額、方案、產品全部來自伺服器端的 env —— 請求裡唯一被採用的
-   * 使用者輸入是 email。
+   * 所以這支**能被任何人呼叫** —— 它因此只做一件事：建一筆我們自己的訂單。
+   * 金額來自伺服器端的價格設定，`MerchantOrderNo` 由我們產生，
+   * 請求裡唯一被採用的使用者輸入是 email 與（夾過的）數量與商品標籤。
+   *
+   * ⛔ 回應裡**沒有** HashKey / HashIV。有的是 `MerchantID` / `TradeInfo` /
+   * `TradeSha` —— 那是 MPG 幕前支付的協定本身要瀏覽器送出去的東西
+   * （`reskin/newebpay.js` 的檔頭有完整理由）。
    *
    * ⛔ 沒設 env 就回 503 + 一句人看得懂的話，前端會留在面板上顯示它。
    * 「按了沒反應」是這種按鈕最糟的失敗方式。
    */
-  router.post('/reskin/checkout', express.json({ limit: 4096 }), async (req, res, next) => {
-    if (!reskin || paygate === null) {
+  router.post('/reskin/checkout', express.json({ limit: 4096 }), (req, res, next) => {
+    if (!reskin || payments === null) {
       sendNotFound(res, '這個實例沒有掛重繪服務');
       return;
     }
 
     res.setHeader('cache-control', 'no-store');
+
+    if (!payments.connected) {
+      res.status(503).json({ ok: false, message: '這個站還沒接金流（示範模式）。' });
+      return;
+    }
 
     const site = store.sites.get(String(req.body?.site ?? ''));
     if (!site || !site.enabled || site.reskin_enabled !== true) {
@@ -307,56 +387,295 @@ function createInternalRouter({ store, favicons, reskin, config, logger = silent
       return;
     }
 
-    const origin = requestOrigin(req);
-    if (origin === null) {
+    const base = callbackBase(req);
+    if (base === null) {
       res.status(400).json({ ok: false, message: '認不出這個請求的 Host。' });
       return;
     }
 
     try {
-      /**
-       * ⛔ 回跳網址用**這個請求的 Host** 組，不從設定讀：使用者會從
-       * 127.0.0.1、區網 IP、tunnel 網域進來，每一種都要回到他來的地方
-       * （同投遞端點的決策；而「後端自己組對外網址」在代理後面會組出內部位址）。
-       */
-      const result = await paygate.createCheckout({
-        email: req.body?.email,
-        returnUrl: `${origin}/__lm/reskin/paid?site=${encodeURIComponent(site.id)}`,
-      });
+      const qty = clampQty(req.body?.qty);
+      const { plan, amount } = priceFor(site, { planId: req.body?.plan, qty });
 
-      if (!result.ok) {
-        res.status(result.status).json({ ok: false, message: result.message });
+      // 藍新收不了 0 元的單。免費方案不該走金流，而不是送去被退回來。
+      if (amount <= 0) {
+        res.status(400).json({ ok: false, message: '這個方案不用付錢，不需要結帳。' });
         return;
       }
 
-      res.json({ ok: true, checkout_url: result.checkoutUrl });
+      const product = productFrom(req.body);
+      const order = store.reskinOrders.create({
+        id: newOrderNo(),
+        siteId: site.id,
+        productId: product.id,
+        productName: product.name,
+        amount,
+        env: payments.env,
+      });
+
+      const form = buildMpgForm({
+        settings: newebpay,
+        order,
+        email: typeof req.body?.email === 'string' ? req.body.email : null,
+        urls: callbackUrls(req, base, site.id, order.id),
+      });
+
+      if (!form.ok) {
+        // 這裡只會因為設定問題失敗，而 `payments.connected` 已經先擋過一次
+        logger.error(`${site.id} 的結帳表單組不出來：${form.reason}`);
+        res.status(503).json({ ok: false, message: '金流設定有問題，請檢查伺服器設定。' });
+        return;
+      }
+
+      logger.info(
+        `${site.id} 建立訂單 ${order.id}：${product.name} × ${qty}・${amount}・${payments.env}`,
+      );
+
+      res.json({
+        ok: true,
+        order_id: order.id,
+        amount,
+        plan: plan.id,
+        env: payments.env,
+        action: form.action,
+        fields: form.fields,
+      });
     } catch (error) {
       next(error);
     }
   });
 
+  /* ---------------------------- 回呼（§2.2） ---------------------------- */
+
   /**
-   * 從付款頁回來（PayGate 把這個網址當藍新的「返回商店」）。
+   * 收到一筆已經**驗過章、解過密**的回呼之後要做的事。
    *
-   * ⛔ **這一跳帶不回付款結果**（藍新的 `BackURL` 就只是一顆返回按鈕，
-   * 真正的結果是 server-to-server 打到 PayGate 的 notify）。所以這一頁
-   * 不准寫「付款成功」—— 寫了就是在猜，而猜錯的方向剛好是最糟的那個。
+   * ⛔ 順序是規格 §2.2 的第 2~4 條：先確認訂單是我們建的 → 再比對金額 →
+   * 才看成功失敗。金額不符一律**不結算**（既不算成功也不改成失敗）：
+   * 那代表有人動過參數，而那時候「把訂單標成失敗」會把真相蓋掉。
+   *
+   * @returns {{ outcome: string, order: object|null }}
+   */
+  function settle(callback) {
+    if (callback.orderNo === null) return { outcome: 'bad-order-no', order: null };
+
+    const order = store.reskinOrders.get(callback.orderNo);
+    if (order === null) return { outcome: 'no-order', order: null };
+
+    // 驗過章就代表對方握有我們的 HashKey，但商店代號還是要對得上
+    // （同一把金鑰只服務一家商店，不符就是設定被換過）
+    if (callback.merchantId !== null && callback.merchantId !== newebpay.merchantId) {
+      return { outcome: 'wrong-merchant', order };
+    }
+    if (callback.amount !== null && callback.amount !== order.amount) {
+      return { outcome: 'amount-mismatch', order };
+    }
+
+    const succeeded = callback.status === 'SUCCESS';
+
+    /**
+     * ⛔ idempotent（規格 §2.2 第 4 條）。同一筆訂單被打到兩次以上是
+     * **正常的**：ReturnURL 與 NotifyURL 都會送，使用者還可能重新整理。
+     * 條件寫在 UPDATE 的 WHERE 裡，`changes === 0` ＝ 早就結算過了。
+     */
+    const changes = succeeded
+      ? store.reskinOrders.markPaid({
+          id: order.id,
+          tradeNo: callback.tradeNo,
+          rawResult: callback.raw,
+        })
+      : store.reskinOrders.markFailed({ id: order.id, rawResult: callback.raw });
+
+    return {
+      outcome: succeeded ? (changes === 0 ? 'already-paid' : 'paid') : 'failed',
+      order: store.reskinOrders.get(order.id),
+    };
+  }
+
+  /** 拒絕回呼的理由 → 一句話。**不要把內部細節寫進去。** */
+  const REJECTIONS = Object.freeze({
+    'not-configured': '這台機器沒有接金流，收不了付款結果。',
+    'missing-fields': '這筆回應缺少必要的欄位。',
+    'too-large': '這筆回應太大了。',
+    'bad-sha': '這筆付款結果的簽章對不上，已經拒絕處理。',
+    'bad-cipher': '這筆付款結果解不開，已經拒絕處理。',
+    'bad-payload': '這筆付款結果的內容看不懂，已經拒絕處理。',
+    'bad-order-no': '這筆付款結果沒有認得出來的訂單編號。',
+    'no-order': '找不到這筆訂單。',
+    'wrong-merchant': '這筆付款結果不是這家商店的，已經拒絕處理。',
+    'amount-mismatch': '這筆付款結果的金額跟訂單不一致，已經拒絕處理。',
+  });
+
+  /**
+   * 驗 → 解 → 結算。ReturnURL 與 NotifyURL 共用這一支，差別只有「回什麼」。
+   *
+   * ⛔ **驗章在解密之前**（`readCallback` 的 return 順序就是那條規格）。
+   */
+  function handleCallback(req, source) {
+    const read = readCallback(req.body, newebpay);
+
+    if (!read.ok) {
+      // 偽造的回呼要留得下痕跡 —— 但 log 不准印金鑰，也不印整段密文
+      logger.warn(`${source} 的付款回呼被拒絕：${read.reason}`);
+      return { ok: false, reason: read.reason, message: REJECTIONS[read.reason] ?? '這筆回應無法處理。' };
+    }
+
+    const { outcome, order } = settle(read);
+
+    if (REJECTIONS[outcome] !== undefined) {
+      logger.warn(`${source} 的付款回呼被拒絕：${outcome}（訂單 ${read.orderNo ?? '?'}）`);
+      return { ok: false, reason: outcome, message: REJECTIONS[outcome] };
+    }
+
+    logger.info(`${source} 的付款回呼：${order.id} → ${outcome}（${read.status}）`);
+    return { ok: true, outcome, order, status: read.status, message: read.message };
+  }
+
+  /** 訂單狀態 → 給人看的那一頁 */
+  function noticeFor(result) {
+    if (!result.ok) {
+      return {
+        title: '這筆付款結果沒有被接受',
+        lines: [
+          result.message,
+          '如果你確實完成了刷卡，請把這一頁的時間告訴我們 —— 款項不會因為這一頁而消失，但訂單需要人工對帳。',
+        ],
+      };
+    }
+
+    const { order } = result;
+    const amount = `${order.currency} ${order.amount}`;
+
+    if (order.status === 'paid') {
+      return {
+        title: result.outcome === 'already-paid' ? '這筆訂單已經付過了' : '付款成功',
+        lines: [
+          `訂單 ${order.id}・${order.product_name}・${amount}`,
+          order.trade_no === null ? '' : `金流交易序號：${order.trade_no}`,
+          order.env === 'live'
+            ? '這是正式環境的交易，款項已經真的被收取。'
+            : '這是測試環境的交易，沒有真的收錢。',
+        ].filter((line) => line.length > 0),
+      };
+    }
+
+    return {
+      title: '付款沒有完成',
+      lines: [
+        `訂單 ${order.id}・${order.product_name}・${amount}`,
+        result.message.length > 0 ? `金流回報：${result.message}` : '金流沒有回報原因。',
+        '這筆訂單沒有被收款。要重試的話回商城再按一次「立即購買」。',
+      ],
+    };
+  }
+
+  function renderNoticePage(res, site, { title, lines }, status = 200) {
+    const theme = themeFor(site?.reskin_theme ?? DEFAULT_THEME);
+
+    res.status(status);
+    res.setHeader('cache-control', 'no-store');
+    res.type('html').send(
+      theme.renderNotice({ title, lines, home: site ? `/p/${site.id}/` : null }),
+    );
+  }
+
+  /**
+   * `ReturnURL`：藍新把使用者的瀏覽器 POST 回這裡，body 裡有加密的結果。
+   *
+   * ⛔ **這是 localhost 唯一收得到的回呼**（規格 §0.2）：`NotifyURL` 是藍新
+   * 的伺服器主動打的，而它打不到 `127.0.0.1`。所以在這台機器上，訂單狀態
+   * 完全靠這一跳 —— 使用者付完**關掉瀏覽器**就不會有人來告訴我們結果，
+   * 那筆訂單會永遠停在 `pending`。這不是完整實作，正式站要讓 `NotifyURL`
+   * 進得來（tunnel 或真的部署）。
+   */
+  router.post(
+    '/reskin/checkout/return',
+    express.urlencoded({ extended: false, limit: 64 * 1024 }),
+    (req, res) => {
+      if (!reskin || payments === null) {
+        sendNotFound(res, '這個實例沒有掛重繪服務');
+        return;
+      }
+
+      const result = handleCallback(req, 'ReturnURL');
+      const site = result.ok ? store.sites.get(result.order.site_id) : null;
+
+      // 驗章失敗回 403：這一頁是人在看，但狀態碼要說實話（偽造的回呼不是 200）
+      renderNoticePage(res, site, noticeFor(result), result.ok ? 200 : 403);
+    },
+  );
+
+  /**
+   * `NotifyURL`：藍新的**伺服器**主動 POST 的那一支。
+   *
+   * ⛔ **在 localhost 這支永遠不會被呼叫到**（藍新打不到 127.0.0.1）。
+   * 它存在是因為驗證與結算的邏輯跟 ReturnURL 完全一樣 —— 哪天換成 tunnel
+   * 或真的部署，不用改一行程式就會開始對帳。回純文字（對方是機器）。
+   */
+  router.post(
+    '/reskin/checkout/notify',
+    express.urlencoded({ extended: false, limit: 64 * 1024 }),
+    (req, res) => {
+      if (!reskin || payments === null) {
+        sendNotFound(res, '這個實例沒有掛重繪服務');
+        return;
+      }
+
+      const result = handleCallback(req, 'NotifyURL');
+
+      res.status(result.ok ? 200 : 403)
+        .type('text/plain; charset=utf-8')
+        .send(result.ok ? `OK ${result.outcome}` : `REJECTED ${result.reason}`);
+    },
+  );
+
+  /**
+   * `ClientBackURL`：使用者在付款頁按「返回商店」或中途離開時落地的地方。
+   *
+   * ⛔ **這一跳帶不回付款結果**（它就只是一顆返回按鈕）。所以這一頁不准猜 ——
+   * 它去讀**我們自己的訂單**，訂單說什麼就寫什麼。還是 `pending` 就老實說
+   * 「還沒收到結果」，不要寫成「付款成功」或「付款失敗」。
    */
   router.get('/reskin/paid', (req, res) => {
     const site = store.sites.get(String(req.query.site ?? ''));
-    const theme = themeFor(site?.reskin_theme ?? DEFAULT_THEME);
+    const order = reskin ? store.reskinOrders.get(String(req.query.order ?? '')) : null;
 
-    res.setHeader('cache-control', 'no-store');
-    res.type('html').send(
-      theme.renderNotice({
+    if (order === null) {
+      renderNoticePage(res, site, {
         title: '付款流程結束',
         lines: [
-          '如果你完成了刷卡，金流那邊已經收到通知，訂閱會自己開通 —— 這一頁看不到結果是正常的（結果是伺服器之間對帳的，不走瀏覽器）。',
+          '我們這邊沒有查到對應的訂單紀錄。如果你剛剛完成了刷卡，請把時間告訴我們以便對帳。',
           '如果你是中途離開付款頁的，那什麼都沒有被扣。',
         ],
-        home: site ? `/p/${site.id}/` : null,
-      }),
-    );
+      });
+      return;
+    }
+
+    const amount = `${order.currency} ${order.amount}`;
+    const lines = {
+      paid: [
+        `訂單 ${order.id}・${order.product_name}・${amount}`,
+        order.env === 'live' ? '這是正式環境的交易。' : '這是測試環境的交易，沒有真的收錢。',
+      ],
+      pending: [
+        `訂單 ${order.id}・${order.product_name}・${amount}`,
+        '我們還沒收到這筆的付款結果。如果你剛完成刷卡，稍等一下再回來看；如果你是中途離開付款頁的，那什麼都沒有被扣。',
+      ],
+      failed: [`訂單 ${order.id}・${order.product_name}・${amount}`, '這筆付款沒有完成，沒有被收款。'],
+      cancelled: [`訂單 ${order.id}・${order.product_name}・${amount}`, '這筆訂單已經取消。'],
+    };
+
+    const titles = {
+      paid: '付款成功',
+      pending: '還沒收到付款結果',
+      failed: '付款沒有完成',
+      cancelled: '訂單已取消',
+    };
+
+    renderNoticePage(res, site, {
+      title: titles[order.status] ?? '訂單狀態',
+      lines: lines[order.status] ?? [`訂單 ${order.id}・${order.product_name}・${amount}`],
+    });
   });
 
   router.get('/reskin/:themeFile', (req, res) => {

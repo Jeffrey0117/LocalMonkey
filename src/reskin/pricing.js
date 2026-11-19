@@ -7,12 +7,15 @@
  * 可拋棄的），而是商城機制的一部分 —— 存在 per-site 設定裡，之後換資料來源
  * 也照樣有效。
  *
- * ⛔ **這裡的 `price` 不是會被扣款的金額。** 它是印在畫面上的數字。
- * 接了金流（SPEC-reskin-v2 §8）之後，真正要扣的錢在 **PayGate 的方案**裡
- * （`reskin/paygate.js` 只送 `plan_id`，金額由 PayGate 那邊決定）——
- * 前端改不了金額，這裡改了也改不了（規則見 `~/.claude/rules/infra-map.md`
- * 的變現三件套：`price` 是後端算的）。兩邊的數字要一致是**設定的責任**，
- * 不是程式可以替使用者保證的事。
+ * ⛔ **v10 起，這裡的 `price` 就是真的會被扣的金額**（SPEC-checkout §2）。
+ * 結帳時由伺服器端從這裡算（`price × 數量`），寫進 `reskin_orders.amount`，
+ * 再加密進 TradeInfo 送去藍新；回呼回來還會跟訂單**再比對一次金額**。
+ *
+ * 所以改這個數字 ＝ 改收費。前端送什麼都不影響它 —— 瀏覽器只送得了
+ * 「哪個方案、幾份」，金額自始至終沒離開過伺服器端
+ * （`~/.claude/rules/infra-map.md` 的變現三件套：`price` 是後端算的）。
+ *
+ * `originalPrice`（劃線價）相反：它**只是行銷定錨**，不會被任何人收。
  */
 
 const DEFAULT_CURRENCY = 'NT$';

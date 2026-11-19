@@ -3,9 +3,13 @@
  * SPEC-reskin-v2 §6 / §8）。
  *
  * ⛔ **沒接金流的時候，這裡完全不碰網路。** 購物車在 `localStorage`，
- * 「確認」只是記在這台瀏覽器裡。接了金流（伺服器端有 PayGate 的 env）之後，
- * 「立即購買」會走**我們自己的**端點 `/__lm/reskin/checkout` —— 金鑰與
- * PayGate 的網址只活在伺服器端，這支看不到也不需要看到。
+ * 「確認」只是記在這台瀏覽器裡。接了金流（伺服器端有藍新的 env）之後，
+ * 「立即購買」會走**我們自己的**端點 `/__lm/reskin/checkout`，拿回一張要
+ * POST 去藍新的表單 —— 商家金鑰只活在伺服器端，這支看不到也不需要看到
+ * （SPEC-checkout §2）。
+ *
+ * ⛔ **金額也不在這支手上。** 送出去的是方案 id 與數量，要收多少錢由伺服器
+ * 端的價格設定算。這支改得了的只有「要買哪個方案、幾份」。
  *
  * ⛔ 這支跑在**被代理的網站**上，所以紀律跟 `gm-shim.js` 一樣：
  * 每一塊都要自己吞掉錯誤。localStorage 被停用（無痕模式、第三方 cookie 設定）
@@ -44,7 +48,12 @@
 
   function config() {
     var tag = document.querySelector('[data-lm-shop-config]');
-    var fallback = { currency: 'NT$', plans: [], item: null, payments: { live: false } };
+    var fallback = {
+      currency: 'NT$',
+      plans: [],
+      item: null,
+      payments: { connected: false, tone: 'demo' },
+    };
     if (!tag) return fallback;
 
     try {
@@ -175,12 +184,44 @@
   }
 
   /**
+   * 把伺服器回來的參數變成一張表單並送出去。
+   *
+   * ⛔ **幕前支付是 POST，不是導址。** 所以這裡不能用 `location.href` ——
+   * 加密的交易資料要放在 body 裡（放 query string 會整串進瀏覽器歷史、
+   * 進 Referer、進任何中間的紀錄）。
+   *
+   * ⛔ 欄位用 `createElement` + `value` 設定，**不是**串 HTML。那些值是
+   * 伺服器給的，但「把外部字串串進 innerHTML」這個習慣本身就是洞。
+   */
+  function submitForm(action, fields) {
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = action;
+    form.style.display = 'none';
+
+    Object.keys(fields).forEach(function (name) {
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = String(fields[name]);
+      form.appendChild(input);
+    });
+
+    document.body.appendChild(form);
+    form.submit();
+  }
+
+  /**
    * 真的去結帳（只有伺服器端接了金流才會走到這裡）。
+   *
+   * ⛔ **金額不在這個請求裡。** 送出去的是「哪個站、哪個方案、幾份、email」，
+   * 要收多少錢由伺服器端的價格設定算 —— 前端改不了金額，連改了也不會生效
+   * （訂單是伺服器建的，而回呼會跟訂單比對金額）。
    *
    * ⛔ 失敗要**留在面板上**並說為什麼。導去一個壞掉的網址、或默默什麼都不做，
    * 都比一句「現在不能結帳」難查。
    */
-  function checkout(settings) {
+  function checkout(settings, plan, qty) {
     var node = dialog();
     var emailInput = node ? node.querySelector('[data-lm-email]') : null;
     var email = emailInput ? String(emailInput.value || '').trim() : '';
@@ -206,7 +247,10 @@
         body: JSON.stringify({
           site: settings.siteId,
           email: email,
-          item: settings.item ? settings.item.name : null,
+          plan: plan ? plan.id : null,
+          qty: qty,
+          productId: settings.item ? settings.item.id : null,
+          productName: settings.item ? settings.item.name : null,
         }),
       })
       .then(function (response) {
@@ -215,15 +259,15 @@
         });
       })
       .then(function (result) {
-        if (result.status === 200 && result.payload && result.payload.checkout_url) {
-          window.location.href = result.payload.checkout_url;
+        var payload = result.payload;
+
+        if (result.status === 200 && payload && payload.action && payload.fields) {
+          submitForm(payload.action, payload.fields);
           return;
         }
 
         restoreGo(settings);
-        showError(
-          (result.payload && result.payload.message) || '現在不能結帳，請稍後再試。',
-        );
+        showError((payload && payload.message) || '現在不能結帳，請稍後再試。');
       })
       .catch(function (error) {
         console.warn('[LocalMonkey] 結帳失敗', error);
@@ -237,7 +281,12 @@
     if (!button) return;
 
     button.disabled = false;
-    button.textContent = settings.payments && settings.payments.live ? '前往付款' : '確認';
+    button.textContent = isConnected(settings) ? '前往付款' : '確認';
+  }
+
+  /** 伺服器端算好的三態（`demo` / `test` / `live`）。前端不准自己組。 */
+  function isConnected(settings) {
+    return Boolean(settings.payments && settings.payments.connected);
   }
 
   /* ------------------------- 商品頁的方案與數量 ------------------------- */
@@ -282,7 +331,7 @@
     var settings = config();
     var plans = Array.isArray(settings.plans) ? settings.plans : [];
     var currency = settings.currency || 'NT$';
-    var live = Boolean(settings.payments && settings.payments.live);
+    var connected = isConnected(settings);
 
     paintCart();
     // 只有畫得出選擇區（兩檔以上）的時候才需要重畫價格；單一方案時
@@ -328,8 +377,8 @@
       }
 
       if (target.hasAttribute('data-lm-checkout-go')) {
-        if (live) {
-          checkout(settings);
+        if (connected) {
+          checkout(settings, selectedPlan(plans), quantity());
           return;
         }
 

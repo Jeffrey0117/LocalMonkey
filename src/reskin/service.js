@@ -25,6 +25,7 @@ const { compileConfig, findEntry } = require('./config.js');
 const { compilePricing } = require('./pricing.js');
 const { extractData, DATA_MODEL_VERSION } = require('./extract.js');
 const { themeFor, DEFAULT_THEME } = require('./themes/index.js');
+const { DEFAULT_ENV, paymentTone } = require('./newebpay.js');
 const { sha256 } = require('../db/reskin.js');
 const { isUtf8Document } = require('../translate/charset.js');
 const { fromLatin1, toLatin1 } = require('../translate/bytes.js');
@@ -47,12 +48,16 @@ function homeFor(siteId) {
  * @param {{
  *   store: object,
  *   logger: object,
- *   payments?: { live: boolean, missing?: Array<string> },
+ *   payments?: { connected: boolean, env?: 'test'|'live', missing?: Array<string> },
  * }} context
- *   `payments` 是「這台機器有沒有接金流」（SPEC-reskin-v2 §8）。
+ *   `payments` 是「這台機器有沒有接金流」（SPEC-checkout §1）。
  *   預設沒接 ＝ 示範模式，版型會據此改文案與結帳面板。
  */
-function createReskinService({ store, logger, payments = { live: false, missing: [] } }) {
+function createReskinService({
+  store,
+  logger,
+  payments = { connected: false, env: DEFAULT_ENV, missing: [] },
+}) {
   /**
    * 每個請求重新讀 + 重新編譯（同規則層）。看起來浪費，但是刻意的：
    * 設定通常兩三筆，一次 index 命中的 SELECT 加幾個正則編譯是微秒級；
@@ -72,15 +77,33 @@ function createReskinService({ store, logger, payments = { live: false, missing:
    *
    * ⛔ **只有這裡決定版型看得到什麼。** 版型層不碰 DB、不認識上游，所以
    * 「回首頁的路徑」「價格方案」「金流接了沒」都得由這支餵進去。
-   * 金流**只給一個布林值** —— PayGate 的網址與金鑰不准進頁面。
+   *
+   * ⛔ 金流**只給兩個值**：`connected`（設定齊全、按鈕是真的）與 `env`
+   * （`test` / `live`）。商家金鑰、端點網址一個字都不准進頁面。
+   * `env` 非得進去不可是因為規格 §1：`live` 的時候購買列要顯示警告色的
+   * 「正式環境（會真的扣款）」—— 使用者按下去之前必須看得到。
    */
   function renderContextFor(site, pricing) {
     return {
       siteId: site.id,
       home: homeFor(site.id),
       pricing: pricing.ok ? pricing.value : compilePricing(null).value,
-      payments: { live: payments.live === true },
+      payments: paymentsForTheme(),
     };
+  }
+
+  /**
+   * 版型與控制台看得到的那一份（刻意是一支函式：少一個「忘了過濾」的機會）。
+   *
+   * ⛔ `tone` 在**這裡**算完才交給版型。版型層自己把 `connected` 與 `env`
+   * 組起來的話，那個三態判斷就會有好幾份 —— 而組錯的其中一種結果是
+   * 「畫面寫測試環境、實際在正式環境扣款」。三態只准有一個真相來源。
+   */
+  function paymentsForTheme() {
+    const connected = payments.connected === true;
+    const env = payments.env === 'live' ? 'live' : DEFAULT_ENV;
+
+    return { connected, env, tone: paymentTone({ connected, env }) };
   }
 
   /**
@@ -335,12 +358,13 @@ function createReskinService({ store, logger, payments = { live: false, missing:
       pricing_error: pricing.ok ? null : pricing.error,
       pricing: pricing.ok ? pricing.value : compilePricing(null).value,
       cached: store.reskinCache.count(site.id),
-      // 控制台要講得出「金流接了沒、缺哪個 env」（SPEC-reskin-v2 §8）
-      payments: { live: payments.live === true, missing: payments.missing ?? [] },
+      // 控制台要講得出「金流接了沒、哪個環境、缺哪個 env」（SPEC-checkout §1）
+      payments: { ...paymentsForTheme(), missing: payments.missing ?? [] },
+      orders: store.reskinOrders.count(site.id),
     };
   }
 
-  return { reskinHtml, nextPage, dryRun, statusFor, settingsFor };
+  return { reskinHtml, nextPage, dryRun, statusFor, settingsFor, paymentsForTheme };
 }
 
 module.exports = { createReskinService, pathnameOf, homeFor, MAX_HTML_BYTES };

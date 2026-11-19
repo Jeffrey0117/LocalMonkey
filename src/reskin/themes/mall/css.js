@@ -43,6 +43,14 @@ const TOKENS = `
   --lm-line:#e2e8f0;
   --lm-bg:#f1f5f9;
   --lm-card:#fff;
+  /**
+   * 警告色。只有一個地方用：「正式環境（會真的扣款）」那一列
+   * （SPEC-checkout §1）。所以它跟品牌色是分開的一組 —— 換色票的時候
+   * 不准被一起調成好看的顏色，它的工作是刺眼。
+   */
+  --lm-warn:#b42318;
+  --lm-warn-soft:#fef3f2;
+  --lm-warn-line:#fda29b;
   --lm-shadow:0 1px 2px rgba(15,23,42,.08);
   --lm-shadow-lift:0 8px 24px rgba(15,23,42,.14);
   --lm-radius:8px;
@@ -281,6 +289,11 @@ const PRODUCT = `
 .lm-note{font-size:12px;color:var(--lm-muted);margin:0}
 /* 金流狀態：要跟按鈕在同一塊、而且看得出來是「狀態」不是說明文 */
 .lm-pay-note{padding:8px 11px;border-radius:var(--lm-radius-sm);background:#f8fafc;border:1px dashed var(--lm-line)}
+/* 正式環境＝會真的扣款。實心邊框 + 警告色 + 粗體，跟其他兩態一眼就分得出來 */
+.lm-pay-note.is-live{
+  background:var(--lm-warn-soft);border:1px solid var(--lm-warn-line);
+  color:var(--lm-warn);font-weight:700;
+}
 
 /* 店家資訊列 */
 .lm-shop{

@@ -44,6 +44,8 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
      * 而下一次按「試一下」就悄悄換成試首頁了。
      */
     path: new Map(),
+    /** siteId → 訂單清單（SPEC-checkout §3）。展開面板時連同狀態一起抓。 */
+    orders: new Map(),
     /**
      * siteId → 編輯中但還沒存的設定。
      *
@@ -72,15 +74,25 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
   }
 
   /**
-   * 金流（SPEC-reskin-v2 §8）。
+   * 金流（SPEC-checkout §1）。
    *
    * ⛔ 這一格的存在理由是「**半套設定**」：env 少設一個的時候，站是 200、
    * 畫面一切正常，而「立即購買」悄悄退回示範模式 —— 從外面看不出差別。
    * 所以缺哪幾個環境變數要直接列出來，而不是只說「沒接」。
+   *
+   * ⛔ **`live` 要是警告色。** 使用者自己說要用正式環境，但控制台跟商品頁
+   * 都必須講出「會真的扣款」。這個判斷用的是伺服器端算好的 `tone` ——
+   * 前端不准自己把 `connected` 跟 `env` 組起來（組錯一次就是真的收錢）。
    */
   function paymentBadge(status) {
-    const payments = status.payments ?? { live: false, missing: [] };
-    if (payments.live) return '<span class="badge is-ok">金流：測試環境已接上</span>';
+    const payments = status.payments ?? { connected: false, tone: 'demo', missing: [] };
+
+    if (payments.tone === 'live') {
+      return '<span class="badge is-bad">金流：正式環境（會真的扣款）</span>';
+    }
+    if (payments.tone === 'test') {
+      return '<span class="badge is-ok">金流：測試環境（不會扣款）</span>';
+    }
 
     const missing = payments.missing ?? [];
     const hint =
@@ -89,6 +101,69 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
     return `<span class="badge" title="${escapeHtml(
       missing.join(' '),
     )}">金流：示範模式${escapeHtml(hint)}</span>`;
+  }
+
+  const ORDER_STATUS = Object.freeze({
+    pending: ['還沒收到結果', ''],
+    paid: ['已付款', 'is-ok'],
+    failed: ['失敗', 'is-bad'],
+    cancelled: ['已取消', ''],
+  });
+
+  /**
+   * 訂單清單（SPEC-checkout §3）——**唯讀**。
+   *
+   * ⛔ 這裡沒有任何按鈕可以改訂單狀態。一個「標成已付款」的按鈕遲早會蓋掉
+   * 一筆真實的對帳紀錄，而那是這個專案裡唯一回不來的資料。
+   *
+   * ⛔ 「還沒收到結果」是**預期中會看到**的狀態，不是壞掉：在 localhost 上
+   * 藍新的 `NotifyURL` 打不進來，所以使用者付完如果直接關掉瀏覽器，
+   * 那一筆就會一直停在這裡。下面那段說明不准省掉（規格 §0.2）。
+   */
+  function ordersBlock(siteId) {
+    const loaded = state.orders.get(siteId);
+
+    const rows =
+      loaded === undefined
+        ? '<tr><td colspan="5" class="muted">載入中…</td></tr>'
+        : loaded.orders.length === 0
+          ? '<tr><td colspan="5" class="muted">還沒有任何訂單。</td></tr>'
+          : loaded.orders
+              .map((order) => {
+                const [label, tone] = ORDER_STATUS[order.status] ?? [order.status, ''];
+                return `
+                <tr>
+                  <td>${escapeHtml((order.created_at ?? '').replace('T', ' ').slice(0, 19))}</td>
+                  <td>${escapeHtml(order.product_name)}</td>
+                  <td>${escapeHtml(order.currency)} ${escapeHtml(order.amount)}</td>
+                  <td><span class="badge ${tone}">${escapeHtml(label)}</span></td>
+                  <td><span class="badge ${
+                    order.env === 'live' ? 'is-bad' : ''
+                  }">${escapeHtml(order.env)}</span></td>
+                </tr>`;
+              })
+              .join('');
+
+    return `
+      <div class="reskin-orders">
+        <label class="reskin-label">
+          訂單（唯讀：時間、商品、金額、狀態、環境。示範模式不會產生訂單）
+        </label>
+        <table class="reskin-pricing">
+          <thead><tr><th>時間</th><th>商品</th><th>金額</th><th>狀態</th><th>環境</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="site-actions">
+          <button type="button" class="ghost" data-action="reskin-orders-reload">重新整理訂單</button>
+        </div>
+        <div class="muted">
+          ⛔ 在 localhost 上，訂單狀態只靠「付完瀏覽器跳回來」那一跳確認 ——
+          藍新的 <code>NotifyURL</code>（它的伺服器主動通知）打不到 127.0.0.1。
+          所以付完直接關掉瀏覽器的話，那一筆會一直停在「還沒收到結果」。
+          正式站要讓 <code>NotifyURL</code> 進得來（tunnel 或真的部署），
+          這一版<strong>不是</strong>完整實作。
+        </div>
+      </div>`;
   }
 
   function pricingRows(status) {
@@ -215,8 +290,8 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
 
           <div>
             <label class="reskin-label">
-              價格方案（上游沒有價格，這是我們自己定的。接了金流的時候，真正被扣的錢
-              在 PayGate 的方案裡 —— 這裡的數字只是印在畫面上）
+              價格方案（上游沒有價格，這是我們自己定的。⛔ 這個數字就是**真的會被扣的
+              金額** —— 結帳時由伺服器端從這裡算，前端改不了）
             </label>
             <table class="reskin-pricing">
               <thead><tr><th>id</th><th>名稱</th><th>價格</th><th>說明</th></tr></thead>
@@ -231,6 +306,7 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
                 ? `<div class="reskin-try is-bad"><pre>${escapeHtml(status.pricing_error)}</pre></div>`
                 : ''
             }
+            ${ordersBlock(site.id)}
           </div>
         </div>
       </div>`;
@@ -289,6 +365,22 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
     state.onChanged();
   }
 
+  /**
+   * 訂單是獨立一支請求。
+   *
+   * ⛔ **抓不到訂單不准讓整個面板失敗。** 抽取設定跟訂單是兩件事，而
+   * 「因為訂單清單掛了所以設定也打不開」是最沒必要的連坐。
+   */
+  async function loadOrders(siteId) {
+    try {
+      state.orders.set(siteId, await api.getReskinOrders(siteId));
+    } catch (error) {
+      console.warn('[LocalMonkey] 訂單清單載入失敗', error);
+      state.orders.set(siteId, { orders: [], total: 0 });
+    }
+    state.onChanged();
+  }
+
   function withErrorBanner(siteId, action) {
     return (async () => {
       try {
@@ -317,6 +409,16 @@ window.LocalMonkeySiteReskin = (function createSiteReskin() {
       state.open.add(site.id);
       onChanged();
       withErrorBanner(site.id, () => load(site.id));
+      loadOrders(site.id);
+    });
+
+    delegate(container, '[data-action="reskin-orders-reload"]', 'click', (event, button) => {
+      const site = siteOf(button);
+      if (!site) return;
+
+      state.orders.delete(site.id);
+      onChanged();
+      loadOrders(site.id);
     });
 
     // 打字就記進草稿（面板隨時可能被重畫，見 state.draft 的註解）
