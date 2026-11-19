@@ -51,7 +51,7 @@ header 裡全都有，所以後台**不提供第二個輸入口**。資訊列唯
 ```bash
 npm install          # postinstall 會自動補 better-sqlite3 的 binding（見下面地雷 1）
 npm start            # 預設 127.0.0.1:30600
-npm test             # node:test，1443 個測試
+npm test             # node:test，1452 個測試
 npm run test:coverage
 ```
 

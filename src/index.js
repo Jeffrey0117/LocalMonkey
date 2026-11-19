@@ -5,6 +5,8 @@ const { createLogger } = require('./logger.js');
 const { openDatabase } = require('./db/index.js');
 const { createStore } = require('./db/store.js');
 const { ensureAdminToken } = require('./admin/token.js');
+const { warnOnHardcodedSecrets } = require('./admin/secret-scan.js');
+const { newebpayStatus } = require('./reskin/newebpay.js');
 const { createApp } = require('./app.js');
 
 function logStartupNotes({ logger, config, token }) {
@@ -27,6 +29,33 @@ function logStartupNotes({ logger, config, token }) {
   if (config.allowPrivate) {
     logger.warn('LOCALMONKEY_ALLOW_PRIVATE=1：SSRF 防護已關閉，可以代理內網位址。');
   }
+
+  /**
+   * 金流的狀態要在啟動時就講清楚（SPEC-checkout §1）—— 「半套設定」的症狀是
+   * 服務 200、健檢綠燈，而「立即購買」悄悄退回示範模式，從外面看不出差別。
+   *
+   * ⛔ `live` 要大聲：使用者自己要用正式環境沒問題，但不該是在收到第一筆
+   * 真實扣款的時候才發現自己設了它。
+   */
+  const payments = newebpayStatus(config.newebpay ?? {});
+
+  if (!payments.connected) {
+    logger.info(`金流：示範模式（缺 ${payments.missing.join('、')}）`);
+  } else if (payments.env === 'live') {
+    logger.warn('⛔ 金流：LOCALMONKEY_NEWEBPAY_ENV=live —— 結帳會真的扣款。');
+  } else {
+    logger.info('金流：藍新測試環境（不會真的扣款）。');
+  }
+
+  // 規格 §0.1：金鑰被貼進 src/ 要大聲。只比對確切的值，所以沒有誤報。
+  warnOnHardcodedSecrets({
+    logger,
+    secrets: {
+      LOCALMONKEY_NEWEBPAY_HASH_KEY: config.newebpay?.hashKey,
+      LOCALMONKEY_NEWEBPAY_HASH_IV: config.newebpay?.hashIv,
+      LOCALMONKEY_ADMIN_TOKEN: config.adminToken,
+    },
+  });
 }
 
 function start(env = process.env) {
