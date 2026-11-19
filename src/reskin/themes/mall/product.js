@@ -13,7 +13,15 @@
  * ⛔ 不准出現任何上游的字樣或選擇器。
  */
 
-const { escapeHtml, formatCount, formatMoney, shopInitial, heading, BRAND } = require('./parts.js');
+const {
+  escapeHtml,
+  formatCount,
+  formatMoney,
+  shopInitial,
+  heading,
+  paymentNote,
+  BRAND,
+} = require('./parts.js');
 
 function renderGallery(data) {
   const images = data.gallery.length > 0 ? data.gallery : [];
@@ -124,8 +132,12 @@ function renderPriceBlock({ currency, headline }) {
  * 「立即購買」旁邊 —— 四顆按鈕裡有兩顆在做同一件事。
  * 現在「預覽」就是開上游的預覽網址（資料模型的 `links.preview`，
  * 抽取層已經換成代理路徑），抽不到就不畫那一顆。
+ *
+ * ⛔ 按鈕下面那行**金流狀態**不是裝飾（規格 §8：「不要讓沒設定的人看到
+ * 壞掉的按鈕」）。只寫在頁尾、或只在面板打開之後才出現，使用者按下去之前
+ * 是看不到的 —— 標示要跟按鈕在同一個地方。
  */
-function renderBuy(data, pricing) {
+function renderBuy(data, pricing, payments) {
   const { currency, plans, headline } = pricing;
 
   return `
@@ -154,6 +166,7 @@ function renderBuy(data, pricing) {
       }
       <button class="lm-btn lm-btn-solid" type="button" data-lm-buy>立即購買</button>
     </div>
+    <p class="lm-note lm-pay-note">${escapeHtml(paymentNote(payments))}</p>
   </div>`;
 }
 
@@ -244,14 +257,14 @@ function renderCrumb(data, { home }) {
 /**
  * @param {object} data `extract.js` 的 product 資料
  * @param {{ currency, plans, headline }} pricing
- * @param {{ home: string }} context
+ * @param {{ home: string, payments: { live: boolean } }} context
  */
 function renderProduct(data, pricing, context) {
   return `
   ${renderCrumb(data, context)}
   <section class="lm-product">
     ${renderGallery(data)}
-    ${renderBuy(data, pricing)}
+    ${renderBuy(data, pricing, context.payments)}
   </section>
   ${renderShop(data)}
   ${renderDescription(data)}

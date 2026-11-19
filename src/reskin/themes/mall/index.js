@@ -65,7 +65,9 @@ function render(data, { siteId, home, pricing, payments }) {
   const priced = priceOf(pricing);
 
   const isProduct = data.kind === 'product';
-  const body = isProduct ? renderProduct(data, priced, { home }) : renderListing(data, priced);
+  const body = isProduct
+    ? renderProduct(data, priced, { home, payments })
+    : renderListing(data, priced);
 
   return renderDocument({
     title: isProduct ? productTitle(data, BRAND) : listingTitle(data, BRAND),

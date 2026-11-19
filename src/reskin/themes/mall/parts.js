@@ -141,11 +141,17 @@ function renderCategories(categories) {
   </div></div></nav>`;
 }
 
-/** 金流那一句話只有一個真相來源：伺服器端的 `payments.live` */
+/**
+ * 金流那一句話只有一個真相來源：伺服器端的 `payments.live`。
+ *
+ * ⛔ 開頭那幾個字是**狀態**（「未接金流（示範模式）」／「測試金流」），
+ * 後面才是解釋。規格 §8 要的是「在 UI 標示」，而標示要在**按鈕旁邊**
+ * 看得到 —— 只寫在頁尾或只在面板打開後才出現，等於沒標。
+ */
 function paymentNote(payments) {
   return payments.live
-    ? '結帳走 PayGate 的測試環境，所以是真的刷卡流程、但扣的是測試金流。'
-    : '這個站還沒接金流（示範模式）：購物車與訂單只存在這台瀏覽器裡。';
+    ? '測試金流（PayGate 測試環境）：是真的刷卡流程，但扣的是測試金流。'
+    : '未接金流（示範模式）：購物車與訂單只存在這台瀏覽器裡。';
 }
 
 function renderFooter({ payments }) {

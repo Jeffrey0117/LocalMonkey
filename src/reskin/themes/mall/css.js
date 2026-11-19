@@ -279,6 +279,8 @@ const PRODUCT = `
 .lm-btn-flat{background:#fff;color:#334155;border:1px solid var(--lm-line);height:40px;font-size:14px}
 .lm-btn-flat:hover{border-color:var(--lm-accent);color:var(--lm-accent)}
 .lm-note{font-size:12px;color:var(--lm-muted);margin:0}
+/* 金流狀態：要跟按鈕在同一塊、而且看得出來是「狀態」不是說明文 */
+.lm-pay-note{padding:8px 11px;border-radius:var(--lm-radius-sm);background:#f8fafc;border:1px dashed var(--lm-line)}
 
 /* 店家資訊列 */
 .lm-shop{
